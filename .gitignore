@@ -1,6 +1,6 @@
 # Dependencies
 node_modules/
-data/
+data/nuggets/
 
 # Environment & secrets
 .env
