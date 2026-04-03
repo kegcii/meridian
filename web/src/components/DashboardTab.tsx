@@ -14,9 +14,10 @@ interface DashboardTabProps {
   sendQuickAction: (action: string) => void;
   quickActionResult: QuickActionResult | null;
   clearQuickActionResult: () => void;
+  onCommand?: (text: string) => void;
 }
 
-export default function DashboardTab({ positions, wallet, lpOverview, sendQuickAction, quickActionResult, clearQuickActionResult }: DashboardTabProps) {
+export default function DashboardTab({ positions, wallet, lpOverview, sendQuickAction, quickActionResult, clearQuickActionResult, onCommand }: DashboardTabProps) {
   const oorCount = useMemo(
     () => positions?.positions.filter((p) => !p.in_range).length ?? 0,
     [positions],
@@ -107,7 +108,7 @@ export default function DashboardTab({ positions, wallet, lpOverview, sendQuickA
           positions.positions.length > 0 ? (
             <div className="flex flex-col gap-2">
               {positions.positions.map((p) => (
-                <PositionCard key={p.position} position={p} />
+                <PositionCard key={p.position} position={p} onCommand={onCommand} />
               ))}
             </div>
           ) : (

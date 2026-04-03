@@ -3,7 +3,7 @@ import cron from "node-cron";
 import readline from "readline";
 import { agentLoop, lightChat, getScreenerModelLabel, screenerLoop } from "./agent.js";
 import { log } from "./logger.js";
-import { getMyPositions } from "./tools/dlmm.js";
+import { getMyPositions, closePosition } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
@@ -20,6 +20,8 @@ import { stageSignals } from "./signal-tracker.js";
 import { getWeightsSummary } from "./signal-weights.js";
 import { startPnlWatcher, stopPnlWatcher } from "./pnl-watcher.js";
 import { recordPositionSnapshot as recordPoolSnapshot, recallForPool } from "./pool-memory.js";
+import { checkDeployerBlacklist } from "./deployer-blacklist.js";
+import { isLaunchpadBlacklisted } from "./launchpad-blacklist.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenHolders, getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import { fetchOkxPriceInfo } from "./tools/okx.js";
@@ -32,6 +34,7 @@ import {
 import { startServer } from "./server.js";
 import { getScreeningThresholdSummary, getStartupMode } from "./runtime-helpers.js";
 import { getRangeSelectionText } from "./prompt.js";
+import { tryRedeploy } from "./auto-redeploy.js";
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
@@ -299,8 +302,30 @@ Example: "AVOID: Entering NOTHING-SOL during 4h +70% pump — reversal risk is h
         for (const p of pos?.positions || []) {
           if (!p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
             emit("out_of_range", { pair: p.pair, minutesOOR: p.minutes_out_of_range });
-          }
+            try {
+    log("cron", `HARD CLOSE: ${p.pair} OOR ${p.minutes_out_of_range}m >= ${config.management.outOfRangeWaitMinutes}m — forcing close`);
+    await closePosition({ position_address: p.position });
+    log("cron", `HARD CLOSE: ${p.pair} closed successfully`);
+    // Auto re-deploy if pool still worth it
+    if (p.oor_direction === "upside") {
+        const rd = await tryRedeploy({
+            pool: p.pool,
+            pool_name: p.pair,
+            base_mint: p.base_mint,
+            strategy: p.strategy,
+            bin_step: p.bin_step,
+            amount_sol: p.amount_sol,
+            oor_direction: p.oor_direction,
+            sol_split_pct: p.sol_split_pct,
+        });
+        if (rd.redeployed) log("cron", `RE-DEPLOY: ${rd.reason}`);
+        else log("cron", `RE-DEPLOY skip: ${rd.reason}`);
+    }
+} catch (e) {
+    log("cron_error", `HARD CLOSE failed for ${p.pair}: ${e.message}`);
+}
         }
+      }
       } catch { /* best-effort */ }
       // Promote high-hit nugget facts to MEMORY.md
       maybePromote();
@@ -435,7 +460,21 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
           c._okxResult = okxResult;  // attach to candidate for signal staging
           const dynFeeResult = dynFeeMap[c.pool] || null;
           const tokenData = infoResult?.results?.[0];
-
+          
+          // ── Deployer + Launchpad blacklist check ──
+          if (tokenData?.launchpad && isLaunchpadBlacklisted(tokenData.launchpad)) {
+            log("launchpad_blacklist", `SKIP ${c.name}: launchpad "${tokenData.launchpad}" is blacklisted`);
+            return null;
+          }
+          if (holdResult?.holders) {
+            const topAddresses = (holdResult.holders || []).slice(0, 5).map(h => h.address).filter(Boolean);
+            const deployerCheck = checkDeployerBlacklist(topAddresses);
+            if (deployerCheck.match) {
+              log("deployer_blacklist", `SKIP ${c.name}: top holder ${deployerCheck.address} is blacklisted deployer "${deployerCheck.name}"`);
+              return null;
+            }
+          }
+         
           let block = `[${c.name}] pool: ${c.pool} | bin_step: ${c.bin_step} | fee/aTVL: ${c.fee_active_tvl_ratio}% | vol: $${c.volume} | organic: ${c.organic_score} | holders: ${c.holders} | volatility: ${c.volatility ?? "?"}`;
 
           if (dynFeeResult) block += ` | base_fee: ${c.fee_pct}% | dynamic_fee: ${dynFeeResult.dynamic_fee_pct}%`;
@@ -461,7 +500,7 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
           }
           return block;
         }));
-        const validBlocks = blocks.filter(b => b.status === "fulfilled").map(b => b.value);
+        const validBlocks = blocks.filter(b => b.status === "fulfilled" && b.value != null).map(b => b.value);
         if (validBlocks.length > 0) {
           candidateBlocks = `\n\nPRE-LOADED CANDIDATES (recon already done — evaluate and deploy the best one):\n${validBlocks.join("\n\n")}\n`;
         }

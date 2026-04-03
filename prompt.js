@@ -52,11 +52,11 @@ function _defaultRangeSelectionText(deployAmount, currentBalanceSol) {
 
   Pool Volatility  │ bid_ask range │ spot range  │ Reasoning
   ─────────────────┼───────────────┼─────────────┼─────────────────────────────
-  >= 8  (extreme)  │ 55–75%        │ 65–85%      │ Wild swings, need maximum room
-  5–8   (high)     │ 45–60%        │ 55–70%      │ Active memecoin territory
-  2–5   (moderate) │ 40–55%        │ 50–65%      │ Normal volatile pool — stay wide
-  < 2   (low)      │ 35–45%        │ 40–50%      │ Ranging/stable, still need buffer
-  BIAS: Always pick the UPPER HALF of the range band. Wider is safer — tighter only if 3+ recent lessons confirm in-range stability for this exact pool.
+  >= 8  (extreme)  │ 35–50%        │ 45–60%      │ Wild swings but concentrate fees — OOR is managed by hard close
+  5–8   (high)     │ 30–40%        │ 40–50%      │ Active memecoin — tight range, max fee per bin
+  2–5   (moderate) │ 25–35%        │ 35–45%      │ Normal volatile pool — concentrate for speed
+  < 2   (low)      │ 20–30%        │ 30–40%      │ Ranging/stable — tight range captures most action
+  BIAS: Pick the MIDDLE of the range band. Tighter = more fee per bin = faster profit. OOR is handled by code-enforced hard close — don't over-widen out of fear.
 
   Adjust from the table using your MEMORY and LESSONS:
   - If LESSONS show repeated OOR downside on similar pools → go wider within the band
@@ -180,33 +180,50 @@ Your goal: Find high-yield, high-volume pools and DEPLOY capital.
 
 ${screenerCriteria}
 
-STRATEGY SELECTION — HARD RULES:
-   DEFAULT: Always use bid_ask (single-sided SOL, bins below active bin only).
-   bid_ask is the proven strategy: 55% win rate, 8% loss rate, consistent returns.
+STRATEGY SELECTION — MOMENTUM-BASED:
+   Choose strategy based on token momentum. Historical data: 71% of positions went OOR upside on bid_ask = missed profit.
 
-   You may ONLY use two-sided spot (with sol_split_pct) when ALL of these conditions are met:
-   1. study_top_lpers shows >= 80% win rate AND top LPers are using two-sided/spot
-   2. Pool has smart_wallets_present = true (institutional conviction)
-   3. Price trend is STABILIZING or RANGING (NOT mid-pump, NOT fading)
-   4. Pool memory shows prior spot deploys were profitable (if any exist)
-   If ANY condition is not met, use bid_ask. No exceptions.
+   DECISION TREE (check in order):
+   A. MOMENTUM UP (use TWO-SIDED SPOT):
+      Deploy spot with sol_split_pct=80-85 when ANY of these momentum signals are present:
+      - change_1h > 5% (price rising in last hour)
+      - organic_score >= 80 AND volume is spiking relative to TVL
+      - study_top_lpers shows top LPers using two-sided/spot strategy
+      - Token just launched (<6h) with strong narrative and rising volume
+      This captures fees from BOTH directions — pump AND pullback.
 
-   When using two-sided spot:
-   - sol_split_pct MUST be 85-90% (mostly SOL, minimal token exposure)
+   B. SIDEWAYS / COOLING (use BID_ASK):
+      Deploy bid_ask when:
+      - change_1h is flat (-3% to +3%)
+      - Volume declining or stable, no momentum signal
+      - Token has been ranging for hours
+      Bid_ask is safe here — you earn fees when price dips into your range.
+
+   C. MOMENTUM DOWN (SKIP):
+      Do NOT deploy when:
+      - change_1h < -5% (active dump)
+      - Volume spike with price dropping (panic selling)
+      - Narrative is dead, organic declining
+      Wait for stabilization.
+
+   SPOT EXECUTION RULES:
+   - sol_split_pct MUST be 80-90% (mostly SOL, minimal token exposure)
    - Never go below sol_split_pct = 80% (too much token risk)
    - Pass sol_split_pct with the deploy. The executor auto-swaps the token portion via Jupiter.
    - You do NOT need to pre-buy tokens. Just provide total SOL as amount_y + sol_split_pct.
+   - Range should be 5-10% wider than bid_ask equivalent (more bins = more room for two-sided action)
 
 SPOT STRATEGY BIN DIRECTION — CRITICAL:
    - SOL (Y / quote) fills bins BELOW the active bin only
    - Base token (X) fills bins ABOVE the active bin only
-   - SOL-only spot: set bins_below = range, bins_above = 0 (same direction as bid_ask)
+   - Two-sided spot with sol_split_pct < 100: system auto-splits bins below AND above based on sol_split_pct
+   - SOL-only spot (sol_split=100): set bins_below = range, bins_above = 0 (same direction as bid_ask)
    - If depositing only SOL, NEVER set bins_above > 0 — those bins will be empty and waste range
 
-WHY bid_ask IS DEFAULT:
-   Historical data: spot without sol_split loses -10.75% avg with 45% win rate.
-   Spot WITH sol_split (85-90%) wins +7.48% avg with 73% win rate — but only when conditions are right.
-   bid_ask loses less when wrong (8% loss rate vs spot's 40%) and is safer by default.
+WHY MOMENTUM-BASED:
+   Old approach (always bid_ask): 71% OOR upside, 29 out of 41 positions earned near-zero fees.
+   Spot WITH sol_split (80-90%) captures fees in both directions — wins when token pumps AND when it pulls back.
+   bid_ask is still valuable for sideways/cooling markets where you want to catch dips safely.
 `;
     if (signalWeights) {
       prompt += `

@@ -32,43 +32,74 @@ export async function discoverPools({
     "quote_token_organic_score>=60",
   ].join("&&");
 
-  const url = `${POOL_DISCOVERY_BASE}/pools?` +
-    `page_size=${page_size}` +
-    `&filter_by=${encodeURIComponent(filters)}` +
-    `&timeframe=${s.timeframe}` +
-    `&category=${s.category}`;
+  // Support multiple categories — fetch in parallel and merge
+  const categories = s.categories?.length ? s.categories : [s.category || "trending"];
 
-  const res = await fetch(url);
+  const fetchCategory = async (category) => {
+    const url = `${POOL_DISCOVERY_BASE}/pools?` +
+      `page_size=${page_size}` +
+      `&filter_by=${encodeURIComponent(filters)}` +
+      `&timeframe=${s.timeframe}` +
+      `&category=${category}`;
 
-  if (!res.ok) {
-    throw new Error(`Pool Discovery API error: ${res.status} ${res.statusText}`);
+    const res = await fetch(url);
+    if (!res.ok) {
+      log("screening", `Pool Discovery API error for category=${category}: ${res.status}`);
+      return [];
+    }
+    const data = await res.json();
+    return (data.data || []).map((p) => ({ ...p, _category: category }));
+  };
+
+  let allPools;
+  if (categories.length === 1) {
+    allPools = await fetchCategory(categories[0]);
+  } else {
+    const results = await Promise.all(categories.map(fetchCategory));
+    // Merge and deduplicate by pool_address
+    const seen = new Set();
+    allPools = [];
+    for (const pools of results) {
+      for (const p of pools) {
+        const addr = p.pool_address || p.address;
+        if (!seen.has(addr)) {
+          seen.add(addr);
+          allPools.push(p);
+        }
+      }
+    }
+    log("screening", `Multi-category fetch: ${categories.join("+")} → ${allPools.length} unique pools (${results.map((r, i) => `${categories[i]}:${r.length}`).join(", ")})`);
   }
 
-  const data = await res.json();
+  const condensed = allPools.map(condensePool);
 
-  const condensed = (data.data || []).map(condensePool);
-
-  // Filter blacklisted base tokens
+  // Filter blacklisted, volatile, and unstable pools
+  let _fBlacklist = 0, _fVolatility = 0, _fPriceChange = 0;
   const pools = condensed.filter((candidate) => {
     const p = normalizeCandidateForUi(candidate);
     if (isBlacklisted(p.base?.mint)) {
-      log("blacklist", `Filtered blacklisted token ${p.base?.symbol} (${p.base?.mint?.slice(0, 8)}) in pool ${p.name}`);
+      log("screening", `Rejected ${p.base?.symbol} (${p.base?.mint?.slice(0, 8)}) — blacklisted`);
+      _fBlacklist++;
       return false;
     }
     if (p.volatility != null && p.volatility > s.maxVolatility) {
+      log("screening", `Rejected ${p.name} — volatility ${p.volatility.toFixed(1)}% > max ${s.maxVolatility}%`);
+      _fVolatility++;
       return false;
     }
     if (p.price_change_pct != null && Math.abs(p.price_change_pct) > s.maxPriceChangePct) {
+      log("screening", `Rejected ${p.name} — price change ${p.price_change_pct.toFixed(1)}% > max ${s.maxPriceChangePct}%`);
+      _fPriceChange++;
       return false;
     }
     return true;
   });
 
-  const filtered = condensed.length - pools.length;
+  const filtered = _fBlacklist + _fVolatility + _fPriceChange;
   if (filtered > 0) {
-    log("blacklist", `Filtered ${filtered} pool(s) with blacklisted tokens`);
+    log("screening", `Pre-filter: ${condensed.length} → ${pools.length} pools (blacklist: ${_fBlacklist}, volatility: ${_fVolatility}, price_change: ${_fPriceChange})`);
   }
-
+  
   return {
     total: data.total,
     pools,

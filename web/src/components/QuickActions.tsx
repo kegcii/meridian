@@ -25,15 +25,19 @@ interface QuickActionsProps {
 }
 
 const ACTIONS = [
-  { key: "top-pools", label: "Top Pools", icon: "*" },
-  { key: "recent-closes", label: "Recent Closes", icon: "+" },
-  { key: "lessons", label: "Lessons", icon: "L" },
-  { key: "memory", label: "Memories", icon: "M" },
-  { key: "darwin-weights", label: "Darwin", icon: "D" },
-  { key: "autoresearch", label: "Autoresearch", icon: "A" },
-  { key: "settings", label: "Settings", icon: "S" },
-  { key: "briefing", label: "Briefing", icon: "B" },
-  { key: "performance", label: "Performance", icon: "P" },
+  { key: "top-pools", label: "Top Pools", icon: "🔥" },
+  { key: "recent-closes", label: "Recent Closes", icon: "🕛" },
+  { key: "lessons", label: "Lessons", icon: "📖" },
+  { key: "memory", label: "Memories", icon: "🧠" },
+  { key: "darwin-weights", label: "Darwin", icon: "🧬" },
+  { key: "autoresearch", label: "Autoresearch", icon: "🔬" },
+  { key: "settings", label: "Settings", icon: "⚙️" },
+  { key: "briefing", label: "Briefing", icon: "📡" },
+  { key: "performance", label: "Performance", icon: "📊" },
+  { key: "smart-wallets", label: "Smart Wallets", icon: "👛" },
+  { key: "token-bl", label: "Token BL", icon: "🚫" },
+  { key: "deployer-bl", label: "Deployer BL", icon: "🔒" },
+  { key: "launchpad-bl", label: "Launchpad BL", icon: "🛑" },
 ] as const;
 
 type ActionKey = (typeof ACTIONS)[number]["key"];
@@ -48,6 +52,10 @@ const ACTION_TITLES: Record<ActionKey, string> = {
   settings: "Settings",
   briefing: "Briefing",
   performance: "Performance",
+  "smart-wallets": "Smart Wallets",
+  "token-bl": "Token Blacklist",
+  "deployer-bl": "Deployer Blacklist",
+  "launchpad-bl": "Launchpad Blacklist",
 };
 
 function EmptyState({ text }: { text: string }) {
@@ -357,6 +365,210 @@ function renderPerformance(data: unknown) {
   );
 }
 
+const LOCAL_ACTIONS = new Set<string>(["smart-wallets", "token-bl", "deployer-bl", "launchpad-bl"]);
+
+/* ---------- Smart Wallets Manager ---------- */
+
+function SmartWalletsManager() {
+  const [wallets, setWallets] = useState<Record<string, unknown>[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [name, setName] = useState("");
+  const [address, setAddress] = useState("");
+  const [category, setCategory] = useState("alpha");
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const fetchWallets = useCallback(async () => {
+    try { const r = await fetch("/api/smart-wallets"); const d = await r.json(); setWallets(d.wallets || []); }
+    catch { setWallets([]); } finally { setLoading(false); }
+  }, []);
+  useEffect(() => { fetchWallets(); }, [fetchWallets]);
+  const handleAdd = async () => {
+    if (!name.trim() || !address.trim()) { setMsg({ text: "Name and address required", ok: false }); return; }
+    try {
+      const r = await fetch("/api/smart-wallets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), address: address.trim(), category }) });
+      const d = await r.json();
+      if (d.success) { setMsg({ text: `Added ${name}`, ok: true }); setName(""); setAddress(""); fetchWallets(); }
+      else { setMsg({ text: d.error || "Failed", ok: false }); }
+    } catch (e) { setMsg({ text: (e as Error).message, ok: false }); }
+  };
+  const handleRemove = async (addr: string) => {
+    try { await fetch("/api/smart-wallets", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address: addr }) }); fetchWallets(); } catch {}
+  };
+  const ic = "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 font-mono text-xs text-cream placeholder:text-ash/30 focus:border-steel/50 focus:outline-none";
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="rounded-xl border border-emerald-400/15 bg-emerald-400/[0.03] p-3">
+        <div className="flex items-center gap-2 mb-2"><div className="h-1.5 w-1.5 rounded-full bg-emerald-400" /><span className="font-mono text-[9px] uppercase tracking-[0.16em] text-emerald-300/70">Add Wallet</span></div>
+        <div className="flex flex-col gap-2">
+          <input type="text" placeholder="Name (e.g. AlphaKing)" value={name} onChange={(e) => setName(e.target.value)} className={ic} />
+          <input type="text" placeholder="Solana address" value={address} onChange={(e) => setAddress(e.target.value)} className={ic} />
+          <div className="flex gap-2">
+            <select value={category} onChange={(e) => setCategory(e.target.value)} className={ic + " flex-1"}>
+              <option value="alpha">Alpha</option><option value="whale">Whale</option><option value="degen">Degen</option><option value="institutional">Institutional</option>
+            </select>
+            <button onClick={handleAdd} className="rounded-lg bg-teal/70 px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-cream hover:bg-teal transition-colors">Add</button>
+          </div>
+          {msg && <div className={`text-[11px] ${msg.ok ? "text-emerald-300" : "text-red-300"}`}>{msg.text}</div>}
+        </div>
+      </div>
+      {loading ? <div className="text-center text-xs text-ash/40 py-4 animate-pulse">Loading...</div>
+       : wallets.length === 0 ? <EmptyState text="No smart wallets tracked yet." />
+       : <div className="flex flex-col gap-1.5">{wallets.map((w) => (
+          <div key={String(w.address)} className="flex items-center justify-between gap-2 rounded-xl border border-white/8 bg-white/4 px-3 py-2.5">
+            <div className="flex-1 min-w-0"><div className="flex items-center gap-2"><span className="text-sm text-cream">{String(w.name)}</span><Badge variant="outline">{String(w.category || "alpha")}</Badge></div><div className="font-mono text-[9px] text-ash/40 truncate mt-0.5">{String(w.address)}</div></div>
+            <button onClick={() => handleRemove(String(w.address))} className="rounded-md bg-red-500/15 px-2 py-1 font-mono text-[8px] uppercase tracking-wider text-red-300 hover:bg-red-500/25 transition-colors shrink-0">Remove</button>
+          </div>))}</div>}
+    </div>
+  );
+}
+
+/* ---------- Deployer Blacklist Manager ---------- */
+
+function DeployerBlManager() {
+  const [entries, setEntries] = useState<Record<string, unknown>[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [address, setAddress] = useState("");
+  const [name, setName] = useState("");
+  const [reason, setReason] = useState("");
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const fetchList = useCallback(async () => {
+    try { const r = await fetch("/api/deployer-blacklist"); const d = await r.json(); setEntries(d.blacklist || []); }
+    catch { setEntries([]); } finally { setLoading(false); }
+  }, []);
+  useEffect(() => { fetchList(); }, [fetchList]);
+  const handleAdd = async () => {
+    if (!address.trim()) { setMsg({ text: "Deployer address required", ok: false }); return; }
+    try {
+      const r = await fetch("/api/deployer-blacklist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address: address.trim(), name: name.trim() || "Unknown", reason: reason.trim() || "manual" }) });
+      const d = await r.json();
+      if (d.blacklisted) { setMsg({ text: `Blacklisted ${name || address.slice(0, 8)}`, ok: true }); setAddress(""); setName(""); setReason(""); fetchList(); }
+      else { setMsg({ text: d.already_blacklisted ? "Already blacklisted" : (d.error || "Failed"), ok: false }); }
+    } catch (e) { setMsg({ text: (e as Error).message, ok: false }); }
+  };
+  const handleRemove = async (addr: string) => {
+    try { await fetch("/api/deployer-blacklist", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address: addr }) }); fetchList(); } catch {}
+  };
+  const ic = "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 font-mono text-xs text-cream placeholder:text-ash/30 focus:border-steel/50 focus:outline-none";
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="rounded-xl border border-red-400/15 bg-red-400/[0.03] p-3">
+        <div className="flex items-center gap-2 mb-2"><div className="h-1.5 w-1.5 rounded-full bg-red-400" /><span className="font-mono text-[9px] uppercase tracking-[0.16em] text-red-300/70">Blacklist Deployer</span></div>
+        <div className="flex flex-col gap-2">
+          <input type="text" placeholder="Deployer wallet address" value={address} onChange={(e) => setAddress(e.target.value)} className={ic} />
+          <input type="text" placeholder="Name / label (optional)" value={name} onChange={(e) => setName(e.target.value)} className={ic} />
+          <input type="text" placeholder="Reason (e.g. serial rugger)" value={reason} onChange={(e) => setReason(e.target.value)} className={ic} />
+          <div className="flex justify-end"><button onClick={handleAdd} className="rounded-lg bg-teal/70 px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-cream hover:bg-teal transition-colors">Blacklist</button></div>
+          {msg && <div className={`text-[11px] ${msg.ok ? "text-emerald-300" : "text-red-300"}`}>{msg.text}</div>}
+        </div>
+      </div>
+      {loading ? <div className="text-center text-xs text-ash/40 py-4 animate-pulse">Loading...</div>
+       : entries.length === 0 ? <EmptyState text="No deployers blacklisted." />
+       : <div className="flex flex-col gap-1.5">{entries.map((b) => (
+          <div key={String(b.address)} className="flex items-center justify-between gap-2 rounded-xl border border-white/8 bg-white/4 px-3 py-2.5">
+            <div className="flex-1 min-w-0"><div className="flex items-center gap-2"><span className="text-sm text-red-300">{String(b.name || "Unknown")}</span><Badge variant="outline">{String(b.reason || "manual")}</Badge></div><div className="font-mono text-[9px] text-ash/40 truncate mt-0.5">{String(b.address)}</div></div>
+            <button onClick={() => handleRemove(String(b.address))} className="rounded-md bg-red-500/15 px-2 py-1 font-mono text-[8px] uppercase tracking-wider text-red-300 hover:bg-red-500/25 transition-colors shrink-0">Remove</button>
+          </div>))}</div>}
+    </div>
+  );
+}
+
+/* ---------- Launchpad Blacklist Manager ---------- */
+
+function LaunchpadBlManager() {
+  const [entries, setEntries] = useState<Record<string, unknown>[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [name, setName] = useState("");
+  const [reason, setReason] = useState("");
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const fetchList = useCallback(async () => {
+    try { const r = await fetch("/api/launchpad-blacklist"); const d = await r.json(); setEntries(d.blacklist || []); }
+    catch { setEntries([]); } finally { setLoading(false); }
+  }, []);
+  useEffect(() => { fetchList(); }, [fetchList]);
+  const handleAdd = async () => {
+    if (!name.trim()) { setMsg({ text: "Launchpad name required", ok: false }); return; }
+    try {
+      const r = await fetch("/api/launchpad-blacklist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim(), reason: reason.trim() || "manual" }) });
+      const d = await r.json();
+      if (d.blacklisted) { setMsg({ text: `Blacklisted ${name}`, ok: true }); setName(""); setReason(""); fetchList(); }
+      else { setMsg({ text: d.already_blacklisted ? "Already blacklisted" : (d.error || "Failed"), ok: false }); }
+    } catch (e) { setMsg({ text: (e as Error).message, ok: false }); }
+  };
+  const handleRemove = async (n: string) => {
+    try { await fetch("/api/launchpad-blacklist", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: n }) }); fetchList(); } catch {}
+  };
+  const ic = "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 font-mono text-xs text-cream placeholder:text-ash/30 focus:border-steel/50 focus:outline-none";
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="rounded-xl border border-amber-400/15 bg-amber-400/[0.03] p-3">
+        <div className="flex items-center gap-2 mb-2"><div className="h-1.5 w-1.5 rounded-full bg-amber-400" /><span className="font-mono text-[9px] uppercase tracking-[0.16em] text-amber-300/70">Blacklist Launchpad</span></div>
+        <div className="flex flex-col gap-2">
+          <input type="text" placeholder="Launchpad name (e.g. pump.fun)" value={name} onChange={(e) => setName(e.target.value)} className={ic} />
+          <input type="text" placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} className={ic} />
+          <div className="flex justify-end"><button onClick={handleAdd} className="rounded-lg bg-teal/70 px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-cream hover:bg-teal transition-colors">Blacklist</button></div>
+          {msg && <div className={`text-[11px] ${msg.ok ? "text-emerald-300" : "text-red-300"}`}>{msg.text}</div>}
+        </div>
+      </div>
+      {loading ? <div className="text-center text-xs text-ash/40 py-4 animate-pulse">Loading...</div>
+       : entries.length === 0 ? <EmptyState text="No launchpads blacklisted." />
+       : <div className="flex flex-col gap-1.5">{entries.map((b) => (
+          <div key={String(b.name)} className="flex items-center justify-between gap-2 rounded-xl border border-white/8 bg-white/4 px-3 py-2.5">
+            <div className="flex-1 min-w-0"><div className="flex items-center gap-2"><span className="text-sm text-amber-300">{String(b.name)}</span><Badge variant="outline">{String(b.reason || "manual")}</Badge></div></div>
+            <button onClick={() => handleRemove(String(b.name))} className="rounded-md bg-red-500/15 px-2 py-1 font-mono text-[8px] uppercase tracking-wider text-red-300 hover:bg-red-500/25 transition-colors shrink-0">Remove</button>
+          </div>))}</div>}
+    </div>
+  );
+}
+
+/* ---------- Token Blacklist Manager ---------- */
+
+function TokenBlManager() {
+  const [entries, setEntries] = useState<Record<string, unknown>[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [mint, setMint] = useState("");
+  const [symbol, setSymbol] = useState("");
+  const [reason, setReason] = useState("");
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const fetchList = useCallback(async () => {
+    try { const r = await fetch("/api/token-blacklist"); const d = await r.json(); setEntries(d.blacklist || []); }
+    catch { setEntries([]); } finally { setLoading(false); }
+  }, []);
+  useEffect(() => { fetchList(); }, [fetchList]);
+  const handleAdd = async () => {
+    if (!mint.trim()) { setMsg({ text: "Token mint address required", ok: false }); return; }
+    try {
+      const r = await fetch("/api/token-blacklist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mint: mint.trim(), symbol: symbol.trim() || "UNKNOWN", reason: reason.trim() || "manual" }) });
+      const d = await r.json();
+      if (d.blacklisted) { setMsg({ text: `Blacklisted ${symbol || mint.slice(0, 8)}`, ok: true }); setMint(""); setSymbol(""); setReason(""); fetchList(); }
+      else { setMsg({ text: d.already_blacklisted ? "Already blacklisted" : (d.error || "Failed"), ok: false }); }
+    } catch (e) { setMsg({ text: (e as Error).message, ok: false }); }
+  };
+  const handleRemove = async (m: string) => {
+    try { await fetch("/api/token-blacklist", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mint: m }) }); fetchList(); } catch {}
+  };
+  const ic = "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 font-mono text-xs text-cream placeholder:text-ash/30 focus:border-steel/50 focus:outline-none";
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="rounded-xl border border-orange-400/15 bg-orange-400/[0.03] p-3">
+        <div className="flex items-center gap-2 mb-2"><div className="h-1.5 w-1.5 rounded-full bg-orange-400" /><span className="font-mono text-[9px] uppercase tracking-[0.16em] text-orange-300/70">Blacklist Token</span></div>
+        <div className="flex flex-col gap-2">
+          <input type="text" placeholder="Token mint address" value={mint} onChange={(e) => setMint(e.target.value)} className={ic} />
+          <input type="text" placeholder="Symbol (e.g. SCAM)" value={symbol} onChange={(e) => setSymbol(e.target.value)} className={ic} />
+          <input type="text" placeholder="Reason (e.g. rugpull, honeypot)" value={reason} onChange={(e) => setReason(e.target.value)} className={ic} />
+          <div className="flex justify-end"><button onClick={handleAdd} className="rounded-lg bg-teal/70 px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-cream hover:bg-teal transition-colors">Blacklist</button></div>
+          {msg && <div className={`text-[11px] ${msg.ok ? "text-emerald-300" : "text-red-300"}`}>{msg.text}</div>}
+        </div>
+      </div>
+      {loading ? <div className="text-center text-xs text-ash/40 py-4 animate-pulse">Loading...</div>
+       : entries.length === 0 ? <EmptyState text="No tokens blacklisted." />
+       : <div className="flex flex-col gap-1.5">{entries.map((b) => (
+          <div key={String(b.mint)} className="flex items-center justify-between gap-2 rounded-xl border border-white/8 bg-white/4 px-3 py-2.5">
+            <div className="flex-1 min-w-0"><div className="flex items-center gap-2"><span className="text-sm text-orange-300">{String(b.symbol)}</span><Badge variant="outline">{String(b.reason || "manual")}</Badge></div><div className="font-mono text-[9px] text-ash/40 truncate mt-0.5">{String(b.mint)}</div></div>
+            <button onClick={() => handleRemove(String(b.mint))} className="rounded-md bg-red-500/15 px-2 py-1 font-mono text-[8px] uppercase tracking-wider text-red-300 hover:bg-red-500/25 transition-colors shrink-0">Remove</button>
+          </div>))}</div>}
+    </div>
+  );
+}
+
 const RENDERERS: Record<ActionKey, (data: unknown) => React.ReactNode> = {
   "top-pools": renderTopPools,
   "recent-closes": renderRecentCloses,
@@ -367,6 +579,10 @@ const RENDERERS: Record<ActionKey, (data: unknown) => React.ReactNode> = {
   settings: renderSettings,
   briefing: renderBriefing,
   performance: renderPerformance,
+  "smart-wallets": () => <SmartWalletsManager />,
+  "token-bl": () => <TokenBlManager />,
+  "deployer-bl": () => <DeployerBlManager />,
+  "launchpad-bl": () => <LaunchpadBlManager />,
 };
 
 export default function QuickActions({
@@ -379,8 +595,12 @@ export default function QuickActions({
 
   const handleClick = useCallback((action: ActionKey) => {
     setActiveAction(action);
-    setLoading(true);
-    sendQuickAction(action);
+    if (LOCAL_ACTIONS.has(action)) {
+      setLoading(false);
+    } else {
+      setLoading(true);
+      sendQuickAction(action);
+    }
   }, [sendQuickAction]);
 
   const handleClose = useCallback(() => {
@@ -401,6 +621,7 @@ export default function QuickActions({
   }, [hasResult, loading]);
 
   const dialogOpen = activeAction != null;
+  const isLocal = activeAction != null && LOCAL_ACTIONS.has(activeAction);
 
   return (
     <>
@@ -420,36 +641,27 @@ export default function QuickActions({
       <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) handleClose(); }}>
         <DialogContent className="flex max-h-[80vh] max-w-2xl flex-col gap-0 p-0">
           <DialogHeader className="flex flex-row items-center justify-between border-b border-white/8 px-5 py-4">
-            <DialogTitle>
-              {activeAction ? ACTION_TITLES[activeAction] : ""}
-            </DialogTitle>
+            <DialogTitle>{activeAction ? ACTION_TITLES[activeAction] : ""}</DialogTitle>
             <DialogClose className="rounded-lg p-1.5 text-ash/60 transition-colors hover:bg-white/8 hover:text-cream">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M1 1L13 13M1 13L13 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 1L13 13M1 13L13 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
             </DialogClose>
           </DialogHeader>
-
           <ScrollArea className="flex-1 overflow-auto px-5 py-4" style={{ maxHeight: "calc(80vh - 72px)" }}>
-            {loading ? (
+            {isLocal && activeAction ? (
+              RENDERERS[activeAction](null)
+            ) : loading ? (
               <div className="flex min-h-32 flex-col items-center justify-center gap-3">
                 <div className="h-6 w-6 animate-spin rounded-full border-2 border-amber-200/30 border-t-amber-200" />
-                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ash/50">
-                  Loading...
-                </span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ash/50">Loading...</span>
               </div>
             ) : quickActionResult?.error ? (
-              <div className="flex min-h-24 items-center justify-center text-sm text-red-400">
-                {quickActionResult.error}
-              </div>
+              <div className="flex min-h-24 items-center justify-center text-sm text-red-400">{quickActionResult.error}</div>
             ) : hasResult && activeAction ? (
               RENDERERS[activeAction](quickActionResult.data)
             ) : (
               <div className="flex min-h-32 flex-col items-center justify-center gap-3">
                 <div className="h-6 w-6 animate-spin rounded-full border-2 border-amber-200/30 border-t-amber-200" />
-                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ash/50">
-                  Loading...
-                </span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ash/50">Loading...</span>
               </div>
             )}
           </ScrollArea>

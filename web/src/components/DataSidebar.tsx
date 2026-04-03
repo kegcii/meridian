@@ -53,7 +53,7 @@ export default function DataSidebar({ positions, wallet, candidates, notificatio
       </TabsList>
 
       <TabsContent value="dashboard" className="flex-1">
-        <DashboardTab positions={positions} wallet={wallet} lpOverview={lpOverview} sendQuickAction={sendQuickAction} quickActionResult={quickActionResult} clearQuickActionResult={clearQuickActionResult} />
+        <DashboardTab positions={positions} wallet={wallet} lpOverview={lpOverview} sendQuickAction={sendQuickAction} quickActionResult={quickActionResult} clearQuickActionResult={clearQuickActionResult} onCommand={onCommand} />
       </TabsContent>
 
       <TabsContent value="candidates" className="flex-1">

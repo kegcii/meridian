@@ -18,6 +18,11 @@ const STATE_FILE = "./state.json";
 
 let _intervalHandle = null;
 
+// ─── Dump Detection ─────────────────────────────────────────────
+// Track last known PnL per position to detect rapid drops
+const _lastPnl = new Map();  // position_address -> { pnl_pct, ts }
+const DUMP_DROP_THRESHOLD = 5;  // close if PnL drops > 5% in one tick (30s)
+
 function loadState() {
   if (!fs.existsSync(STATE_FILE)) {
     return { positions: {}, recentEvents: [], lastUpdated: null };
@@ -60,6 +65,59 @@ export async function runPnlWatcher() {
       }
 
       try {
+        // ─── Dump Detection: rapid PnL drop between ticks ───
+        const prev = _lastPnl.get(p.position);
+        _lastPnl.set(p.position, { pnl_pct: p.pnl_pct, ts: Date.now() });
+
+        if (prev) {
+          const drop = prev.pnl_pct - p.pnl_pct;
+          if (drop >= DUMP_DROP_THRESHOLD) {
+            const dumpReason = `DUMP_DETECT: PnL dropped ${drop.toFixed(1)}% in ~30s (${prev.pnl_pct.toFixed(1)}% → ${p.pnl_pct.toFixed(1)}%) — emergency close`;
+            log("pnl_watcher", `DUMP DETECTED for ${p.pair || p.position.slice(0, 8)}: ${dumpReason}`);
+
+            const closeResult = await closePosition({
+              position_address: p.position,
+              _pnlOverride: {
+                pnl_usd: p.pnl_usd,
+                pnl_pct: p.pnl_pct,
+                total_value_usd: p.total_value_usd,
+                collected_fees_usd: p.collected_fees_usd,
+                unclaimed_fees_usd: p.unclaimed_fees_usd,
+              },
+            });
+
+            if (closeResult?.success) {
+              log("pnl_watcher", `DUMP CLOSE: ${p.pair || p.position.slice(0, 8)} | PnL: ${p.pnl_pct}%`);
+              try {
+                const state = loadState();
+                state.recentAutoCloses = state.recentAutoCloses || [];
+                state.recentAutoCloses.push({
+                  position: p.position,
+                  pair: p.pair,
+                  reason: dumpReason,
+                  pnl_pct: p.pnl_pct,
+                  ts: new Date().toISOString(),
+                });
+                state.recentAutoCloses = state.recentAutoCloses.slice(-20);
+                saveState(state);
+              } catch {}
+              emit("pnl_watcher_close", {
+                pair: p.pair,
+                pnlPct: p.pnl_pct,
+                pnlSol: p.pnl_sol,
+                pnlUsd: p.pnl_usd,
+                autoClose: true,
+                reason: dumpReason,
+              });
+            } else {
+              log("pnl_watcher_error", `DUMP CLOSE failed for ${p.position.slice(0, 8)}: ${closeResult?.error || "unknown"}`);
+            }
+            _lastPnl.delete(p.position);
+            continue; // skip normal exit checks — already handled
+          }
+        }
+
+        // ─── Normal exit checks (SL, TP, trailing) ───
         const exitAction = updatePnlAndCheckExits(p.position, p.pnl_pct, config);
         const fixedTpHit =
           !exitAction &&
@@ -91,7 +149,7 @@ export async function runPnlWatcher() {
         }
 
         log("pnl_watcher", `Closed ${p.pair || p.position.slice(0, 8)} | PnL: ${p.pnl_pct}% ($${p.pnl_usd})`);
-
+        _lastPnl.delete(p.position); // clean up tracking
         try {
           const state = loadState();
           state.recentAutoCloses = state.recentAutoCloses || [];

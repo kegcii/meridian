@@ -1487,6 +1487,7 @@ export async function closePosition({ position_address, _pnlOverride = null }) {
         const baseMint = tracked.base_mint;
         const SOL = "So11111111111111111111111111111111111111112";
         if (baseMint && baseMint !== SOL) {
+          await new Promise(r => setTimeout(r, 6000)); // wait 6s for on-chain settlement
           const walletBals = await getWalletBalances();
           const baseToken = walletBals.tokens?.find((t) => t.mint === baseMint);
           if (baseToken && baseToken.balance > 0 && (baseToken.usd ?? 0) >= 0.10) {

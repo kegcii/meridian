@@ -26,6 +26,10 @@ import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { getLpOverview } from "./tools/lp-overview.js";
 import { generateBriefing } from "./briefing.js";
+import { addSmartWallet, removeSmartWallet, listSmartWallets } from "./smart-wallets.js";
+import { addToBlacklist, removeFromBlacklist, listBlacklist } from "./token-blacklist.js";
+import { addDeployer, removeDeployer, listDeployerBlacklist } from "./deployer-blacklist.js";
+import { addLaunchpad, removeLaunchpad, listLaunchpadBlacklist } from "./launchpad-blacklist.js";
 
 // Cached startup data — avoids duplicate Helius calls when WebSocket connects
 let _startupCache = { wallet: null, positions: null, candidates: null, lpOverview: null, ts: 0 };
@@ -198,6 +202,47 @@ export function startServer(timersFn) {
       log("server_error", `GET /api/insights failed: ${err.message}`);
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // ── Smart Wallets ──
+  app.get("/api/smart-wallets", (_req, res) => {
+    try { res.json(listSmartWallets()); } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+  app.post("/api/smart-wallets", (req, res) => {
+    try { res.json(addSmartWallet(req.body || {})); } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+  app.delete("/api/smart-wallets", (req, res) => {
+    try { res.json(removeSmartWallet(req.body || {})); } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+  // ── Token Blacklist ──
+  app.get("/api/token-blacklist", (_req, res) => {
+    try { res.json(listBlacklist()); } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+  app.post("/api/token-blacklist", (req, res) => {
+    try { res.json(addToBlacklist(req.body || {})); } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+  app.delete("/api/token-blacklist", (req, res) => {
+    try { res.json(removeFromBlacklist(req.body || {})); } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+  // ── Deployer Blacklist ──
+  app.get("/api/deployer-blacklist", (_req, res) => {
+    try { res.json(listDeployerBlacklist()); } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+  app.post("/api/deployer-blacklist", (req, res) => {
+    try { res.json(addDeployer(req.body || {})); } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+  app.delete("/api/deployer-blacklist", (req, res) => {
+    try { res.json(removeDeployer(req.body || {})); } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+  // ── Launchpad Blacklist ──
+  app.get("/api/launchpad-blacklist", (_req, res) => {
+    try { res.json(listLaunchpadBlacklist()); } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+  app.post("/api/launchpad-blacklist", (req, res) => {
+    try { res.json(addLaunchpad(req.body || {})); } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+  app.delete("/api/launchpad-blacklist", (req, res) => {
+    try { res.json(removeLaunchpad(req.body || {})); } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
   // Static files — only if the dist directory exists (production build)

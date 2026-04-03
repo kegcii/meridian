@@ -100,10 +100,10 @@ export async function maybeRunAutoresearch(perfData, lessons, cfg) {
 // ─── Analyze + Generate Experiment ───────────────────────────
 
 async function analyzeAndGenerate(perfData, lessons, cfg, state) {
-  const minCloses = cfg.autoresearch?.minClosesPerTrial ?? 7;
+  const minCloses = cfg.autoresearch?.minClosesPerTrial ?? 6;
 
   // Need at least 15 closes to analyze, or at minimum minCloses * 2
-  if (perfData.length < Math.max(15, minCloses * 2)) {
+  if (perfData.length < Math.max(12, minCloses * 2)) {
     log("autoresearch", `Not enough data (${perfData.length} closes) — skipping`);
     return;
   }

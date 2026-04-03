@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState, useCallback } from "react";
 import type { PositionInfo } from "../hooks/useWebSocket";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,8 +23,22 @@ function formatAge(minutes: number): string {
   return `${days}d ${hrs % 24}h`;
 }
 
-function PositionCardInner({ position }: { position: PositionInfo }) {
+function PositionCardInner({ position, onCommand }: { position: PositionInfo; onCommand?: (text: string) => void }) {
   const { pair, pool, base_mint, in_range, pnl_pct, unclaimed_fees_sol, unclaimed_fees_usd, age_minutes, active_bin, lower_bin, upper_bin } = position;
+  const [closing, setClosing] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
+
+  const handleClose = useCallback(() => {
+    if (!confirmClose) {
+      setConfirmClose(true);
+      setTimeout(() => setConfirmClose(false), 5000); // reset after 5s
+      return;
+    }
+    if (!onCommand) return;
+    setClosing(true);
+    onCommand(`close my ${pair} position`);
+    setTimeout(() => { setClosing(false); setConfirmClose(false); }, 10000);
+  }, [confirmClose, onCommand, pair]);
 
   const pnlColor = pnl_pct >= 0 ? "text-emerald-400" : "text-red-400";
   const fees = unclaimed_fees_sol != null ? `${unclaimed_fees_sol.toFixed(4)} SOL` : unclaimed_fees_usd != null ? `$${unclaimed_fees_usd.toFixed(2)}` : "--";
@@ -52,6 +66,16 @@ function PositionCardInner({ position }: { position: PositionInfo }) {
                 <a href={getOrbTokenUrl(base_mint!)} target="_blank" rel="noreferrer">
                   Token
                 </a>
+              </Button>
+            )}
+            {onCommand && (
+              <Button
+                size="sm"
+                variant={confirmClose ? "secondary" : "outline"}
+                onClick={handleClose}
+                disabled={closing}
+              >
+                {closing ? "Closing..." : confirmClose ? "Confirm Close" : "Close"}
               </Button>
             )}
           </div>
