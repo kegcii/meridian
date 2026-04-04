@@ -1,70 +1,71 @@
 #!/bin/bash
 # claude-monitor.sh
-# Autonomous Claude monitoring script — runs claude CLI non-interactively,
-# analyzes bot performance, makes improvements, restarts if needed.
-# Called by cron every 2 hours.
+# Autonomous Claude improvement agent — runs every 4 hours via cron.
+# Reads .claude/auto-improve.md and executes all steps.
 #
-# Setup:
-#   chmod +x scripts/claude-monitor.sh
-#   crontab -e → add: 0 */2 * * * /root/meridian-bot/meridian/scripts/claude-monitor.sh
-
-set -euo pipefail
+# Crontab: 0 */4 * * * /root/meridian-bot/meridian/scripts/claude-monitor.sh
 
 REPO="/root/meridian-bot/meridian"
-LOG_FILE="$REPO/logs/claude-monitor.log"
-TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M WIB')
+LOG="$REPO/logs/claude-monitor-$(date +%Y-%m-%d).log"
 
-# Load .env for TELEGRAM vars
-if [ -f "$REPO/.env" ]; then
-  export $(grep -v '^#' "$REPO/.env" | grep -v '^$' | xargs 2>/dev/null) || true
-fi
+mkdir -p "$REPO/logs"
 
-TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
-TELEGRAM_CHAT="${TELEGRAM_CHAT_ID:-}"
+# Load .env
+set -a
+source "$REPO/.env" 2>/dev/null || true
+set +a
+
+TELEGRAM_TOKEN="${TELEGRAM_AGENT_TOKEN:-}"
 
 send_telegram() {
   local msg="$1"
-  if [ -n "$TELEGRAM_TOKEN" ] && [ -n "$TELEGRAM_CHAT" ]; then
-    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-      -d "chat_id=${TELEGRAM_CHAT}" \
-      -d "text=${msg}" \
-      -d "parse_mode=HTML" > /dev/null 2>&1 || true
-  fi
+  [ -z "$TELEGRAM_TOKEN" ] && return
+  local chat_id
+  chat_id=$(node --input-type=module << 'EOF' 2>/dev/null
+import fs from 'fs';
+try {
+  const c = JSON.parse(fs.readFileSync('/root/meridian-bot/meridian/user-config.json','utf8'));
+  process.stdout.write(c.telegramAgentChatId || process.env.TELEGRAM_CHAT_ID || '');
+} catch { process.stdout.write(''); }
+EOF
+)
+  [ -z "$chat_id" ] && return
+  curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+    -H "Content-Type: application/json" \
+    -d "{\"chat_id\":\"${chat_id}\",\"text\":\"${msg//\"/\\\"}\",\"parse_mode\":\"HTML\"}" \
+    > /dev/null 2>&1 || true
 }
 
-echo "[$TIMESTAMP] Claude monitor starting..." >> "$LOG_FILE"
+{
+  echo ""
+  echo "══════════════════════════════════════"
+  echo "[$TIMESTAMP] Autonomous run starting"
+  echo "══════════════════════════════════════"
+} >> "$LOG"
+
+send_telegram "⏳ <b>Meridian Auto-Improve</b> dimulai...
+🕐 ${TIMESTAMP}"
 
 cd "$REPO"
 
-# Run claude non-interactively with a monitoring prompt
-CLAUDE_OUTPUT=$(claude --print \
-  --allowedTools "Read,Edit,Write,Bash,Glob,Grep" \
-  --max-turns 30 \
-  "You are monitoring the Meridian DLMM LP bot autonomously. The bot is running in a screen session named 'meridian'.
+PROMPT="Read /root/meridian-bot/meridian/.claude/auto-improve.md carefully, then execute every step from top to bottom. Working directory: /root/meridian-bot/meridian. This is a fully autonomous scheduled run — complete all steps without asking for confirmation."
 
-Your job:
-1. Check recent performance: read logs/agent-$(date +%Y-%m-%d).log (last 200 lines), pool-memory.json, state.json
-2. Identify any issues: errors, repeated failures, poor PnL trends, strategy problems
-3. If improvements needed: edit code files, commit with git, push to myfork/feature/upstream-merge
-4. If bot needs restart after changes: run: screen -S meridian -X quit; sleep 1; screen -dmS meridian bash -c 'npm start 2>&1 | tee -a logs/agent-\$(date +%Y-%m-%d).log'
-5. Summarize what you found and what you did (max 3 bullet points, concise)
+claude \
+  --print \
+  --allowedTools "Bash,Read,Write,Edit,Glob,Grep,MultiEdit" \
+  --max-turns 80 \
+  --output-format text \
+  "$PROMPT" >> "$LOG" 2>&1
 
-Rules:
-- Only make changes if there is a clear problem worth fixing
-- Do NOT change user-config.json values (those are user preferences)
-- Do NOT touch .env or wallet keys
-- Always git add + commit + push after code changes
-- If everything looks fine, just say so — do not make unnecessary changes
-- Keep summary under 200 chars total for Telegram
+EXIT_CODE=$?
 
-Output ONLY the summary (3 bullets max), nothing else." 2>> "$LOG_FILE" || echo "Claude monitor failed")
+echo "[$TIMESTAMP] Exit code: $EXIT_CODE" >> "$LOG"
 
-echo "[$TIMESTAMP] Output: $CLAUDE_OUTPUT" >> "$LOG_FILE"
-
-# Send to Telegram
-if [ -n "$CLAUDE_OUTPUT" ]; then
-  send_telegram "🤖 <b>Claude Monitor</b> [$TIMESTAMP]
-$CLAUDE_OUTPUT"
+if [ $EXIT_CODE -ne 0 ]; then
+  send_telegram "❌ <b>Auto-Improve FAILED</b>
+🕐 ${TIMESTAMP}
+Exit: ${EXIT_CODE} — cek logs/claude-monitor-$(date +%Y-%m-%d).log"
 fi
 
-echo "[$TIMESTAMP] Done." >> "$LOG_FILE"
+echo "[$TIMESTAMP] Done." >> "$LOG"
