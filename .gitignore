@@ -33,6 +33,7 @@ web/dist/
 
 # Dev context
 context.md
+CLAUDE.md
 *.bak
 *.bak1
 *.bak2
