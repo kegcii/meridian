@@ -145,7 +145,7 @@ function startCronJobs() {
         timers.managementLastRun = Date.now();
         return;
       }
-    } catch { /* proceed if check fails */ }
+    } catch (e) { log("cron", `Management pre-check failed (${e.message}), proceeding anyway`); }
 
     setManagementBusy(true);
     timers.managementLastRun = Date.now();
@@ -217,7 +217,7 @@ function startCronJobs() {
           if (feeLines.length > 0) {
             memoryHints += `\n\nDYNAMIC FEES (current):\n${feeLines.join("\n")}\n`;
           }
-        } catch { /* best-effort */ }
+        } catch (e) { log("cron", `Dynamic fee fetch failed: ${e.message}`); }
         // Hive mind pattern consensus (if enabled, min 10 deploys for signal)
         try {
           const hiveMind = await import("./hive-mind.js");
@@ -230,8 +230,8 @@ function startCronJobs() {
               }
             }
           }
-        } catch { /* hive is best-effort */ }
-      } catch { /* best-effort */ }
+        } catch (e) { log("cron", `Hive mind query failed: ${e.message}`); }
+      } catch (e) { log("cron", `Management enrichment failed: ${e.message}`); }
 
       // Inject recent auto-closes from PnL watcher so LLM knows what happened
       let autoCloseInfo = "";
@@ -244,7 +244,7 @@ function startCronJobs() {
         if (recent.length > 0) {
           autoCloseInfo = `\n\nPNL WATCHER AUTO-CLOSES (last hour):\n${recent.map(ac => `• ${ac.pair}: ${ac.reason} (PnL: ${ac.pnl_pct?.toFixed(1)}% at ${ac.ts})`).join("\n")}\n`;
         }
-      } catch { /* best-effort */ }
+      } catch (e) { log("cron", `Auto-close info read failed: ${e.message}`); }
 
       const pnlUnit = config.management.pnlUnit?.toUpperCase() || "SOL";
       const { content } = await agentLoop(`
@@ -326,7 +326,7 @@ Example: "AVOID: Entering NOTHING-SOL during 4h +70% pump — reversal risk is h
 }
         }
       }
-      } catch { /* best-effort */ }
+      } catch (e) { log("cron", `Post-management OOR check failed: ${e.message}`); }
       // Promote high-hit nugget facts to MEMORY.md
       maybePromote();
       checkCapacity();
@@ -429,7 +429,7 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
         if (recalls.length > 0) {
           memoryHints = `\n\nMEMORY RECALL (from past sessions):\n${recalls.map(h => `[${h.source}] ${h.key}: ${h.answer}`).join("\n")}\n`;
         }
-      } catch { /* memory recall is best-effort */ }
+      } catch (e) { log("cron", `Screening memory recall failed: ${e.message}`); }
 
       // Pre-load top 3 candidates with recon data in parallel
       let candidateBlocks = "";
@@ -536,7 +536,7 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
               okx_latest_signal_age_min: c._okxSignal?.latest_signal_age_min ?? null,
               okx_latest_sold_ratio: c._okxSignal?.latest_sold_ratio_percent ?? null,
             }, c.base_mint || c.base?.mint || null);
-          } catch { /* staging is best-effort */ }
+          } catch (e) { log("cron", `Signal staging failed: ${e.message}`); }
         }
         // Hive mind consensus (if enabled)
         try {
@@ -548,7 +548,7 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
               if (hiveConsensus) candidateBlocks += "\n" + hiveConsensus;
             }
           }
-        } catch { /* hive is best-effort */ }
+        } catch (e) { log("cron", `Hive mind screening failed: ${e.message}`); }
       } catch (e) {
         log("cron", `Pre-load failed (${e.message}), agent will fetch manually`);
       }
@@ -560,7 +560,7 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
         if (weightsSummary) {
           signalWeightsBlock = `\n\n${weightsSummary}\n`;
         }
-      } catch { /* best-effort */ }
+      } catch (e) { log("cron", `Signal weights load failed: ${e.message}`); }
 
       const okxSignalGuide = candidateBlocks
         ? `\n\nOKX SIGNAL INTERPRETATION:\n- latest_signal_age_min lower = fresher wallet interest\n- signal_count_30m / signal_count_2h and signal_amount_usd_30m / signal_amount_usd_2h measure recent wallet conviction\n- latest_sold_ratio_percent lower = signal wallets are still holding; higher = signal more exhausted\n- Use OKX signal as confirmation only, never as a standalone deploy trigger\n- Missing OKX signal is neutral, not a hard fail\n`
@@ -751,7 +751,7 @@ if (runtimeMode.interactive) {
     try {
       const { setStartupCache } = await import("./server.js");
       setStartupCache({ wallet, positions, candidates: screenResult });
-    } catch { /* best-effort */ }
+    } catch (e) { log("startup", `Cache init failed: ${e.message}`); }
     const total_screened = screenResult.total_screened ?? 0;
     startupCandidates = candidates;
 

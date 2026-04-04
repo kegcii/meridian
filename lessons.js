@@ -45,7 +45,9 @@ function load() {
 }
 
 function save(data) {
-  fs.writeFileSync(LESSONS_FILE, JSON.stringify(data, null, 2));
+  const tmp = LESSONS_FILE + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+  fs.renameSync(tmp, LESSONS_FILE);
 }
 
 // ─── Record Position Performance ──────────────────────────────

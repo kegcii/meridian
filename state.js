@@ -30,7 +30,11 @@ function load() {
 function save(state) {
   try {
     state.lastUpdated = new Date().toISOString();
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    // Atomic write: write to temp file then rename — prevents corruption
+    // if pnl-watcher and management cycle write simultaneously
+    const tmp = STATE_FILE + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+    fs.renameSync(tmp, STATE_FILE);
   } catch (err) {
     log("state_error", `Failed to write state.json: ${err.message}`);
   }
@@ -374,7 +378,7 @@ export async function syncOpenPositions(active_addresses) {
   try {
     const { fetchHistoricalPositionMap } = await import("./tools/lp-overview.js");
     lpAgentMap = await fetchHistoricalPositionMap();
-  } catch { /* LP Agent unavailable */ }
+  } catch (e) { log("state", `LP Agent history fetch unavailable: ${e.message}`); }
 
   // Lazy import of recordPerformance (only needed if we have closed positions)
   let recordPerformance = null;

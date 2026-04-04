@@ -276,7 +276,7 @@ export async function executeTool(name, args) {
       // ─── Capture screening signals from tool results ────────
       try {
         captureToolSignals(name, args, result);
-      } catch { /* signal capture is best-effort */ }
+      } catch (e) { log("warn", `Signal capture failed for ${name}: ${e.message}`); }
     }
 
     return result;
@@ -311,7 +311,8 @@ async function runSafetyChecks(name, args) {
           const { getPoolDetail } = await import("./screening.js");
           const poolDetail = await getPoolDetail({ pool_address: args.pool_address });
           effectiveBinStep = poolDetail?.bin_step ?? null;
-        } catch {
+        } catch (e) {
+          log("warn", `Could not fetch bin_step for ${args.pool_address}: ${e.message}`);
           effectiveBinStep = null;
         }
       }

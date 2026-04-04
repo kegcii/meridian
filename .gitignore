@@ -18,7 +18,6 @@ strategy-library.json
 autoresearch.json
 launchpad-blacklist.json
 signal-weights.json
-token-blacklist.json
 deployer-blacklist.json
 activity.json
 
@@ -40,3 +39,4 @@ context.md
 *.save
 *.latest
 *.main-github
+*.tmp

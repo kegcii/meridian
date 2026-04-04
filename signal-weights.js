@@ -101,7 +101,9 @@ export function loadWeights() {
 
 export function saveWeights(data) {
   try {
-    fs.writeFileSync(WEIGHTS_FILE, JSON.stringify(data, null, 2));
+    const tmp = WEIGHTS_FILE + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+    fs.renameSync(tmp, WEIGHTS_FILE);
   } catch (err) {
     log("signal_weights_error", `Failed to write signal-weights.json: ${err.message}`);
   }

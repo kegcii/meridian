@@ -184,6 +184,24 @@ export function startServer(timersFn) {
   const app = express();
   app.use(express.json());
 
+  // ── Auth middleware ──────────────────────────────────────────
+  // Set WEB_AUTH_TOKEN in .env to require a bearer token on all
+  // /api routes and WebSocket connections.  When unset, the server
+  // runs without auth (backwards-compatible).
+  const AUTH_TOKEN = process.env.WEB_AUTH_TOKEN || null;
+  if (AUTH_TOKEN) {
+    app.use("/api", (req, res, next) => {
+      const token =
+        req.headers.authorization?.replace("Bearer ", "") ||
+        req.query.token;
+      if (token !== AUTH_TOKEN) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      next();
+    });
+    log("server", "API auth enabled (WEB_AUTH_TOKEN set)");
+  }
+
   const server = createServer(app);
   const wss = new WebSocketServer({ server, path: "/ws" });
 
@@ -349,7 +367,18 @@ export function startServer(timersFn) {
   //  WEBSOCKET CONNECTION HANDLING
   // ═══════════════════════════════════════════
 
-  wss.on("connection", async (ws) => {
+  wss.on("connection", async (ws, req) => {
+    // ── WebSocket auth ──
+    if (AUTH_TOKEN) {
+      const url = new URL(req.url, "http://localhost");
+      const token = url.searchParams.get("token");
+      if (token !== AUTH_TOKEN) {
+        log("server", "WebSocket rejected — invalid or missing token");
+        ws.close(4001, "Unauthorized");
+        return;
+      }
+    }
+
     log("server", "WebSocket client connected");
 
     // Send init payload with status, history, timers, and data

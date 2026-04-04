@@ -29,7 +29,8 @@ function loadState() {
   }
   try {
     return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
-  } catch {
+  } catch (e) {
+    log("pnl_watcher_error", `Failed to parse state.json: ${e.message}`);
     return { positions: {}, lastUpdated: null };
   }
 }
@@ -37,7 +38,9 @@ function loadState() {
 function saveState(state) {
   try {
     state.lastUpdated = new Date().toISOString();
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    const tmp = STATE_FILE + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+    fs.renameSync(tmp, STATE_FILE);
   } catch (err) {
     log("pnl_watcher_error", `Failed to write state.json: ${err.message}`);
   }
@@ -100,7 +103,7 @@ export async function runPnlWatcher() {
                 });
                 state.recentAutoCloses = state.recentAutoCloses.slice(-20);
                 saveState(state);
-              } catch {}
+              } catch (e) { log("pnl_watcher_error", `Failed to record dump close in state: ${e.message}`); }
               emit("pnl_watcher_close", {
                 pair: p.pair,
                 pnlPct: p.pnl_pct,
