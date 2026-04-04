@@ -247,11 +247,11 @@ export async function deployPosition({
     throw new Error("Only 'bid_ask' or 'spot' strategies are allowed.");
   }
 
-  // ─── Guard: two-sided spot safety checks ───────────────────────────────��─────
-  // One-sided spot (sol_split_pct=100) is always allowed — no token exposure.
-  // Two-sided (sol_split_pct<100) hard blocks: dump >25% 1h, or proven negative pool history.
-  // Momentum/strategy decisions are handled by the agent via prompt instructions.
-  const isTwoSidedSpot = activeStrategy === "spot" && sol_split_pct != null && sol_split_pct < 100;
+  // ─── Guard: two-sided safety checks (spot or bid_ask) ─────────────────────
+  // One-sided (sol_split_pct=100 or null) is always allowed — no token exposure.
+  // Two-sided (sol_split_pct 70-80) hard blocks: dump >25% 1h, or proven negative history.
+  // Strategy/direction decisions are handled by the agent via prompt instructions.
+  const isTwoSidedSpot = sol_split_pct != null && sol_split_pct < 100;
   if (isTwoSidedSpot) {
     // Hard block: price dumping >25% in 1h — rug/panic, token side will bleed
     try {
@@ -346,35 +346,34 @@ export async function deployPosition({
   }
 
   // ─── Detect auto-swap need ────────────────────────────────────
-  // When the model wants two-sided spot but only has SOL:
-  //   sol_split_pct is provided AND < 100, strategy is "spot", and no amount_x given.
+  // When the agent wants two-sided (spot or bid_ask) but only has SOL:
+  //   sol_split_pct is provided AND < 100, no amount_x given.
   // We'll swap some SOL → base token automatically after fetching the pool.
   const needsAutoSwap = sol_split_pct != null && sol_split_pct < 100
-    && activeStrategy === "spot"
     && !((amount_x ?? 0) > 0);
 
   let hasBaseToken = (amount_x ?? 0) > 0;
   const hasSol = totalSolAmount > 0;
 
-  if (activeStrategy === "spot" && bins_below && !bins_above) {
+  if (bins_below && !bins_above) {
     const totalRangeBins = bins_below;
 
     if (needsAutoSwap || (hasBaseToken && hasSol)) {
       // TWO-SIDED: split bins between SOL (below) and token (above)
-      const splitPct = sol_split_pct ?? 50;
+      const splitPct = sol_split_pct ?? 70;
       const split = splitRangeBins(totalRangeBins, splitPct);
       bins_below = split.binsBelow;
       bins_above = split.binsAbove;
-      log("deploy", `Two-sided spot: ${splitPct}% SOL / ${100 - splitPct}% token → bins_below=${bins_below}, bins_above=${bins_above} (total ${totalRangeBins})`);
+      log("deploy", `Two-sided ${activeStrategy}: ${splitPct}% SOL / ${100 - splitPct}% token → bins_below=${bins_below}, bins_above=${bins_above} (total ${totalRangeBins})`);
     } else if (hasBaseToken && !hasSol) {
       // TOKEN-ONLY: all bins above active bin
       bins_below = 0;
       bins_above = totalRangeBins;
-      log("deploy", `Token-only spot: all ${totalRangeBins} bins above active bin`);
+      log("deploy", `Token-only ${activeStrategy}: all ${totalRangeBins} bins above active bin`);
     } else {
       // SOL-ONLY: all bins below active bin
       bins_above = 0;
-      log("deploy", `SOL-only spot: all ${totalRangeBins} bins below active bin`);
+      log("deploy", `SOL-only ${activeStrategy}: all ${totalRangeBins} bins below active bin`);
     }
   }
 
@@ -565,8 +564,8 @@ export async function deployPosition({
         pool_name,
         base_mint: pool.lbPair.tokenXMint.toBase58(),
         strategy: activeStrategy,
-        strategy_type: activeStrategy === "bid_ask" ? "BidAsk" : (sol_split_pct === 100 ? "SpotOneSide" : "SpotTwoSide"),
-        sol_split_pct: sol_split_pct ?? (activeStrategy === "bid_ask" ? 100 : null),
+        strategy_type: activeStrategy === "bid_ask" ? (sol_split_pct != null && sol_split_pct < 100 ? "BidAskTwoSide" : "BidAsk") : (sol_split_pct === 100 ? "SpotOneSide" : "SpotTwoSide"),
+        sol_split_pct: sol_split_pct ?? null,
         bin_range: { min: minBinId, max: maxBinId, bins_below: activeBinsBelow, bins_above: activeBinsAbove },
         bin_step: resolvedBinStep,
         volatility,

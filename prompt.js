@@ -200,42 +200,34 @@ STRATEGY SELECTION — MOMENTUM-BASED:
    ⚠️ HISTORICAL DATA: 122/132 positions used bid_ask, 67% closed OOR upside = missed fees.
    Spot is UNDERUSED. Default toward spot unless token is clearly cooling/ranging.
 
-   DECISION TREE (check in order):
-   A. CLEAR POSITIVE MOMENTUM (use TWO-SIDED SPOT, sol_split_pct=82-87):
-      Token side earns fees during pumps. Use when you see:
-      - change_1h > 1% AND change_5m > 0.5%
-      - OR volume/TVL >= 0.4 AND organic_score >= 75 (strong activity signal)
-      - OR study_top_lpers shows top LPers using two-sided/spot strategy
-      - OR token just launched (<6h) with narrative and rising volume
-      sol_split=85: 85% SOL below + 15% token above. Small token exposure, bidirectional fees.
+   4 STRATEGY OPTIONS — pick based on market condition:
 
-   B. FLAT / UNCLEAR MOMENTUM (use ONE-SIDED SPOT, sol_split_pct=100):
-      No clear direction but pool still has good fee/TVL. Spot distribution is better than
-      bid_ask even one-sided — more fee density per bin.
-      - change_1h between -1% and +1% (ranging, no clear direction)
-      - OR change_5m flat but fee_active_tvl_ratio still high (>0.2)
-      - OR you're unsure about direction
-      sol_split=100: SOL only (no token swap needed), bins_below=range, bins_above=0.
-      Same SOL exposure as bid_ask but with spot distribution for better fee capture.
+   ┌─────────────────┬────────────────┬──────────────────────────────────────────────┐
+   │ Strategy        │ sol_split_pct  │ When to use                                  │
+   ├─────────────────┼────────────────┼──────────────────────────────────────────────┤
+   │ spot two-sided  │ 70–80          │ Clear momentum up (1h>1%, 5m>0.5%) — best    │
+   │                 │                │ fee capture both directions during pumps      │
+   ├─────────────────┼────────────────┼──────────────────────────────────────────────┤
+   │ bid_ask two-sid │ 70–80          │ Momentum up but want tighter bid/ask spread  │
+   │                 │                │ distribution. Good for high-volatility pools  │
+   ├─────────────────┼────────────────┼──────────────────────────────────────────────┤
+   │ spot one-sided  │ 100            │ Flat/unclear momentum, fee/TVL still good.   │
+   │                 │                │ Better fee distribution than bid_ask one-side │
+   ├─────────────────┼────────────────┼──────────────────────────────────────────────┤
+   │ bid_ask one-sid │ 100 or omit    │ Confirmed cooling/ranging, or price falling. │
+   │                 │                │ Conservative. Earns fees on dips into range  │
+   └─────────────────┴────────────────┴──────────────────────────────────────────────┘
 
-   C. CONFIRMED COOLING / RANGING (use BID_ASK):
-      Deploy bid_ask ONLY when ALL of these are true:
-      - change_1h negative or very flat AND change_5m also flat/negative
-      - Volume declining — no momentum signal at all
-      - Pool shows confirmed ranging, price repeatedly bouncing at same levels
-      bid_ask is the conservative fallback for clear bearish/sideways pools.
+   TWO-SIDED RULES (applies to both spot and bid_ask two-sided):
+   - sol_split_pct TARGET: 70 (70% SOL, 30% token) — balanced two-sided exposure
+   - sol_split_pct MAX: 80 (80% SOL, 20% token) — if you want conservative token exposure
+   - NEVER below 70% SOL (too much token IL risk)
+   - Executor auto-swaps the token portion via Jupiter. You do NOT pre-buy tokens.
+   - Just pass total SOL as amount_y + sol_split_pct. Executor handles the rest.
 
-   D. PANIC / DUMP (SKIP):
-      Do NOT deploy when:
-      - change_1h < -20% (rug or panic)
-      - Volume spiking but price crashing (panic selling)
-      Wait for stabilization.
-
-   SPOT EXECUTION RULES:
-   - Two-sided (sol_split_pct=82-87): executor auto-swaps token portion via Jupiter. You do NOT pre-buy.
-   - One-sided (sol_split_pct=100): SOL only, set bins_above=0. No swap needed.
-   - Never below sol_split_pct = 80% (too much token risk)
-   - Spot range = same as bid_ask equivalent from volatility table (not wider)
+   SKIP entirely when:
+   - change_1h < -20% (rug or panic sell)
+   - Volume spiking but price crashing simultaneously
 
 SPOT STRATEGY BIN DIRECTION — CRITICAL:
    - SOL (Y / quote) fills bins BELOW the active bin only
@@ -246,7 +238,7 @@ SPOT STRATEGY BIN DIRECTION — CRITICAL:
 
 WHY SPOT IS DEFAULT:
    Historical: 122 bid_ask with 67% OOR upside = SOL sat idle during pumps, zero fees.
-   Spot sol_split=85 means 85% SOL exposure below + 15% token above = fees in BOTH directions.
+   Two-sided sol_split=70 means 70% SOL below + 30% token above = fees in BOTH directions.
    With 85% SOL split, downside risk barely differs from pure bid_ask.
    bid_ask is still correct for confirmed ranging/cooling — but that is the minority case.
 `;
