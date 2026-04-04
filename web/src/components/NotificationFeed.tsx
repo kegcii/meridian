@@ -96,7 +96,7 @@ export default function NotificationFeed({ notifications }: NotificationFeedProp
                 <Badge variant={style.badge}>{style.label}</Badge>
                 <span className="font-mono text-[10px] text-ash/60">{time}</span>
               </div>
-              <div className="text-cream/80 whitespace-pre-wrap">{displayText}</div>
+              <div className="text-cream/80 whitespace-pre-wrap break-words" style={{ overflowWrap: 'break-word' }}>{displayText}</div>
               {isExpandable && (
                 <button
                   onClick={() => toggle(n.id)}

@@ -421,7 +421,7 @@ export default function IntelTab() {
                                 <td className="px-3 py-2 font-mono text-xs text-ash/50">{experiments.length - i}</td>
                                 <td className={`px-3 py-2 font-mono text-[10px] uppercase tracking-[0.1em] ${statusColor}`}>{exp.status}</td>
                                 <td className="px-3 py-2 text-xs text-cream/80">{exp.section}</td>
-                                <td className="max-w-[200px] truncate px-3 py-2 text-xs text-cream/70">{exp.hypothesis}</td>
+                                <td className="px-3 py-2 text-xs text-cream/70" style={{ minWidth: 120, maxWidth: '40vw', overflowWrap: 'break-word', wordBreak: 'break-word', whiteSpace: 'normal' }}>{exp.hypothesis}</td>
                                 <td className="px-3 py-2 text-right font-mono text-[11px] text-cream/80">
                                   {baseWR}{basePnl} → {trialWR}{trialPnl}
                                 </td>

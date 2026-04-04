@@ -104,7 +104,7 @@ export default function CandidatesTab({ candidates, onCommand }: CandidatesTabPr
 
         {candidates.candidates.length > 0 ? (
           <Card>
-            <CardContent className="p-0">
+            <CardContent className="overflow-x-auto p-0">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -112,8 +112,8 @@ export default function CandidatesTab({ candidates, onCommand }: CandidatesTabPr
                     <TableHead>Pool</TableHead>
                     <TableHead className="text-right">Fee/TVL</TableHead>
                     <TableHead className="text-right">Volume</TableHead>
-                    <TableHead className="text-right">Organic</TableHead>
-                    <TableHead className="text-right">Active %</TableHead>
+                    <TableHead className="text-right hidden sm:table-cell">Organic</TableHead>
+                    <TableHead className="text-right hidden sm:table-cell">Active %</TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -126,13 +126,13 @@ export default function CandidatesTab({ candidates, onCommand }: CandidatesTabPr
                     return (
                       <TableRow key={c.pool}>
                         <TableCell className="text-ash/60">{i + 1}</TableCell>
-                        <TableCell className="max-w-[160px]">
+                        <TableCell>
                           <div className="flex flex-col gap-1">
-                            <span className="truncate font-medium text-cream">
+                            <span className="font-medium text-cream" style={{ overflowWrap: 'break-word', wordBreak: 'break-word' }}>
                               {c.name || c.pool.slice(0, 8)}
                             </span>
-                            <span className="truncate text-[10px] text-ash/44">
-                              {c.pool}
+                            <span className="text-[10px] text-ash/44 break-all">
+                              {c.pool.slice(0, 12)}...
                             </span>
                           </div>
                         </TableCell>
@@ -142,20 +142,21 @@ export default function CandidatesTab({ candidates, onCommand }: CandidatesTabPr
                         <TableCell className="text-right">
                           {formatVolume(vol)}
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right hidden sm:table-cell">
                           {c.organic_score != null ? c.organic_score.toFixed(1) : "--"}
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right hidden sm:table-cell">
                           {activePct != null ? `${activePct.toFixed(0)}%` : "--"}
                         </TableCell>
                         <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
+                          <div className="flex justify-end gap-1">
                             <Button size="sm" onClick={() => onCommand(String(i + 1))}>
                               Deploy
                             </Button>
                             <Button
                               size="sm"
                               variant="outline"
+                              className="hidden sm:inline-flex"
                               onClick={() => onCommand(`What do you think about pool ${c.pool} (${c.name || "unknown"})?`)}
                             >
                               Ask

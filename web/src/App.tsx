@@ -32,7 +32,7 @@ export default function App() {
   }, [sendMessage]);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-transparent">
+    <div className="flex flex-col overflow-hidden bg-transparent" style={{ height: '100dvh' }}>
       <StatusBar connected={connected} status={status} timers={timers} wallet={wallet} onOpenGraph={() => setGraphOpen(true)} />
 
       <div className="flex flex-1 flex-col overflow-hidden lg:flex-row" style={{ minHeight: 0 }}>
@@ -71,7 +71,7 @@ export default function App() {
         </button>
 
         {/* Data Sidebar — primary view on mobile */}
-        <div className="flex flex-1 flex-col overflow-y-auto bg-[linear-gradient(180deg,rgba(8,31,40,0.54),rgba(0,15,20,0.72))] lg:flex-[0.92]" style={{ minHeight: 0 }}>
+        <div className="flex flex-1 flex-col overflow-y-auto bg-[linear-gradient(180deg,rgba(8,31,40,0.54),rgba(0,15,20,0.72))] pb-20 sm:pb-4 lg:flex-[0.92]" style={{ minHeight: 0 }}>
           <DataSidebar
             positions={positions}
             wallet={wallet}

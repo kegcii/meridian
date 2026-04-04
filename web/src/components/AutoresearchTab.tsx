@@ -201,7 +201,7 @@ export default function AutoresearchTab() {
             </div>
 
             {/* Quick stats */}
-            <div className="mt-4 grid grid-cols-4 gap-2">
+            <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
               {[
                 { label: "Total", value: stats.total, color: "text-cream" },
                 { label: "Kept", value: stats.kept, color: "text-emerald-300" },

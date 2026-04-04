@@ -125,7 +125,7 @@ function renderTopPools(data: unknown) {
       <TableBody>
         {pools.map((p: Record<string, unknown>, i: number) => (
           <TableRow key={i}>
-            <TableCell className="max-w-[140px] truncate">{String(p.name ?? p.pair ?? "--")}</TableCell>
+            <TableCell className="break-words" style={{maxWidth:"40vw",overflowWrap:"break-word"}}>{String(p.name ?? p.pair ?? "--")}</TableCell>
             <TableCell className="text-right">{fmtNum(p.fee_tvl_ratio ?? p.fee_tvl)}</TableCell>
             <TableCell className="text-right">{fmtUsd(p.volume ?? p.volume_24h)}</TableCell>
             <TableCell className="text-right">{fmtPct(p.organic ?? p.organic_score)}</TableCell>
@@ -158,12 +158,12 @@ function renderRecentCloses(data: unknown) {
           const pnlColor = pnlPct >= 0 ? "text-emerald-300" : "text-red-400";
           return (
             <TableRow key={i}>
-              <TableCell className="max-w-[120px] truncate">{String(c.pool ?? c.pair ?? "--")}</TableCell>
+              <TableCell className="break-words" style={{maxWidth:"40vw",overflowWrap:"break-word"}}>{String(c.pool ?? c.pair ?? "--")}</TableCell>
               <TableCell className={`text-right ${pnlColor}`}>{fmtPct(c.pnl_pct)}</TableCell>
               <TableCell className={`text-right ${pnlColor}`}>{fmtUsd(c.pnl_usd)}</TableCell>
               <TableCell className="text-right">{fmtHoldTime(c.minutes_held ?? c.hold_time)}</TableCell>
               <TableCell>{String(c.strategy ?? "--")}</TableCell>
-              <TableCell className="max-w-[100px] truncate text-ash/70">{String(c.close_reason ?? c.reason ?? "--")}</TableCell>
+              <TableCell className="break-words text-ash/70" style={{maxWidth:"40vw",overflowWrap:"break-word"}}>{String(c.close_reason ?? c.reason ?? "--")}</TableCell>
             </TableRow>
           );
         })}

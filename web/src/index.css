@@ -158,11 +158,32 @@ body::after {
 @media (max-width: 640px) {
   ::-webkit-scrollbar { width: 3px; }
 
-  /* Prevent iOS bounce */
-  html { overflow: hidden; overscroll-behavior: none; }
+  html, body, #root {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
 
-  /* Better touch scrolling */
+  html { overscroll-behavior: none; }
+
   .overflow-y-auto, .overflow-auto {
     -webkit-overflow-scrolling: touch;
+  }
+
+  /* Global word-wrap for mobile — prevent text clipping */
+  td, th, p, span, div {
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  /* Tables scroll horizontally on mobile */
+  table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  thead, tbody, tr {
+    display: table;
+    width: 100%;
+    table-layout: auto;
   }
 }

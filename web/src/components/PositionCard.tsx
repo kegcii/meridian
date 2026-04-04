@@ -153,11 +153,11 @@ function PositionCardInner({ position, onCommand, screeningTimeframe, screeningC
           </span>
         </div>
         {(screeningTimeframe || position.deploy_timeframe) && (
-          <div className="ml-auto flex flex-col items-end gap-0.5">
+          <div className="mt-1 flex flex-col gap-0.5 border-t border-white/6 pt-1.5">
             {position.deploy_timeframe && (
-              <span className="font-mono text-[8px] text-ash/36">deploy: {position.deploy_timeframe} · {(position.deploy_categories || []).join("+")}</span>
+              <span className="font-mono text-[8px] text-ash/36 break-all">deploy: {position.deploy_timeframe} · {(position.deploy_categories || []).join("+")}</span>
             )}
-            <span className="font-mono text-[9px] text-ash/50">live: {screeningTimeframe || "?"} · {(screeningCategories || []).join("+")}</span>
+            <span className="font-mono text-[9px] text-ash/50 break-all">live: {screeningTimeframe || "?"} · {(screeningCategories || []).join("+")}</span>
           </div>
         )}
       </div>
