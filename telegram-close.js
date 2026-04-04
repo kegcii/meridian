@@ -98,35 +98,78 @@ async function send(text) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// ── Helpers ───────────────────────────────────────────────────────
+function formatPnl(pnlSol, pnlUsd, pnlPct, unit = "sol") {
+  const sign = (pnlPct ?? 0) >= 0 ? "+" : "";
+  const pct  = `${sign}${(pnlPct ?? 0).toFixed(2)}%`;
+  if (unit === "sol" && pnlSol != null) {
+    return `${sign}${pnlSol.toFixed(4)} SOL  (${pct})`;
+  }
+  return `${sign}$${(pnlUsd ?? 0).toFixed(2)}  (${pct})`;
+}
+
+function formatStrategy(strategy, solSplitPct) {
+  if (!strategy) return null;
+  if (solSplitPct != null && solSplitPct < 100) {
+    const tokenPct = 100 - solSplitPct;
+    return `${strategy} two-sided  ${solSplitPct}% SOL / ${tokenPct}% token`;
+  }
+  return `${strategy} one-sided`;
+}
+
+function formatReason(reason) {
+  if (!reason) return null;
+  return reason
+    .replace("agent decision (OOR upside)", "OOR upside — price pumped above range")
+    .replace("agent decision (OOR downside)", "OOR downside — price dropped below range")
+    .replace("agent decision", "agent decision")
+    .replace("pnl_watcher", "emergency auto-close")
+    .replace("trailing_stop", "trailing stop hit")
+    .replace("stop_loss", "stop-loss hit")
+    .replace("take_profit", "take-profit hit");
+}
+
+function pnlIcon(pnlPct) {
+  if ((pnlPct ?? 0) > 0.5) return "✅";
+  if ((pnlPct ?? 0) < -5)  return "🔴";
+  if ((pnlPct ?? 0) < 0)   return "🟡";
+  return "⬜";
+}
+
 // ── Subscribe: close events only ─────────────────────────────────
 on("close", async (data) => {
   if (!isEnabled()) return;
   const { config } = await import("./config.js");
   const unit = config.management?.pnlUnit || "sol";
-  const pnl = unit === "sol" && data.pnlSol != null ? data.pnlSol : (data.pnlUsd ?? 0);
-  const sign = pnl >= 0 ? "+" : "";
-  const label = unit === "sol" && data.pnlSol != null
-    ? `${sign}${pnl.toFixed(4)} SOL`
-    : `${sign}$${pnl.toFixed(2)}`;
-  const pnlPct = `${sign}${(data.pnlPct ?? 0).toFixed(2)}%`;
-  const reason = data.reason ? `\nReason: ${data.reason}` : "";
-  const strategy = data.strategy ? `\nStrategy: ${data.strategy}` : "";
-  await send(
-    `🔒 <b>Closed</b> ${data.pair}\n` +
-    `PnL: <b>${label}</b> (${pnlPct})` +
-    strategy +
-    reason
-  );
+
+  const icon     = pnlIcon(data.pnlPct);
+  const pnlLine  = formatPnl(data.pnlSol, data.pnlUsd, data.pnlPct, unit);
+  const stratLine = formatStrategy(data.strategy, data.solSplitPct);
+  const heldLine  = data.minutesHeld != null ? `${data.minutesHeld}m` : null;
+  const reasonLine = formatReason(data.reason);
+
+  const lines = [
+    `${icon} <b>${data.pair || "Position"}</b>  closed`,
+    `PnL: <b>${pnlLine}</b>`,
+  ];
+  if (stratLine) lines.push(`Strategy: ${stratLine}`);
+  if (heldLine)  lines.push(`Held: ${heldLine}`);
+  if (reasonLine) lines.push(`Reason: ${reasonLine}`);
+
+  await send(lines.join("\n"));
 });
 
 on("pnl_watcher_close", async (data) => {
   if (!isEnabled()) return;
-  const sign = (data.pnlPct || 0) >= 0 ? "+" : "";
-  await send(
-    `⚡ <b>Emergency Close</b> ${data.pair}\n` +
-    `PnL: ${sign}${(data.pnlPct ?? 0).toFixed(2)}%\n` +
-    `Reason: ${data.reason || "PnL watcher"}`
-  );
+  const { config } = await import("./config.js");
+  const unit = config.management?.pnlUnit || "sol";
+  const pnlLine = formatPnl(data.pnlSol, data.pnlUsd, data.pnlPct, unit);
+
+  await send([
+    `⚡ <b>${data.pair || "Position"}</b>  emergency close`,
+    `PnL: <b>${pnlLine}</b>`,
+    `Reason: ${data.reason || "PnL watcher triggered"}`,
+  ].join("\n"));
 });
 
 // ── Init ─────────────────────────────────────────────────────────

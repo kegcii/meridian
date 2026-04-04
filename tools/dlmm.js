@@ -1578,7 +1578,20 @@ export async function closePosition({ position_address, _pnlOverride = null }) {
         log("close_warn", `Post-close swap error: ${swapErr.message}`);
       }
 
-      return { success: true, position: position_address, pool: poolAddress, txs: txHashes, pnl_usd: pnlUsd, pnl_pct: pnlPct };
+      return {
+        success: true,
+        position: position_address,
+        pool: poolAddress,
+        pool_name: tracked?.pool_name || null,
+        strategy: tracked?.strategy || null,
+        sol_split_pct: tracked?.sol_split_pct ?? null,
+        minutes_held: minutesHeld,
+        close_reason: closeReason,
+        txs: txHashes,
+        pnl_usd: pnlUsd,
+        pnl_pct: pnlPct,
+        pnl_sol: tracked?.amount_sol ? null : null, // SOL PnL via LP Agent if available
+      };
     }
 
     return { success: true, position: position_address, pool: poolAddress, txs: txHashes };
