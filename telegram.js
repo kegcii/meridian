@@ -176,16 +176,10 @@ function sleep(ms) {
 }
 
 // ─── Subscribe to notifier events ────────────────────────────────
-// Telegram receives all notifications via the pub/sub hub.
-// Guards with isEnabled() so nothing fires when TOKEN is missing.
-on("deploy", (data) => { if (isEnabled()) notifyDeploy(data).catch(() => {}); });
+// Only close-related events are notified. Cycle reports and OOR are suppressed.
 on("close", (data) => { if (isEnabled()) notifyClose(data).catch(() => {}); });
-on("out_of_range", (data) => { if (isEnabled()) notifyOutOfRange(data).catch(() => {}); });
 on("pnl_watcher_close", (data) => {
   if (!isEnabled()) return;
   const sign = (data.pnlPct || 0) >= 0 ? "+" : "";
-  sendMessage(`⚡ PnL Watcher Auto-Close: ${data.pair}\n${data.reason}\nPnL: ${sign}${data.pnlPct?.toFixed(1)}%`).catch(() => {});
+  sendMessage(`⚡ Emergency Close: ${data.pair}\n${data.reason}\nPnL: ${sign}${data.pnlPct?.toFixed(1)}%`).catch(() => {});
 });
-on("cycle:management", ({ report }) => { if (isEnabled()) sendMessage(`🔄 Management Cycle\n\n${report}`).catch(() => {}); });
-on("cycle:screening", ({ report }) => { if (isEnabled()) sendMessage(`🔍 Screening Cycle\n\n${report}`).catch(() => {}); });
-on("briefing", ({ html }) => { if (isEnabled()) sendHTML(html).catch(() => {}); });
