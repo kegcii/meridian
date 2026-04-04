@@ -196,8 +196,8 @@ async function main() {
 
     process.stdout.write(`${lpers.length} lpers, ${added} new candidates\n`);
 
-    // Rate limiting: pause between requests (LP Agent ~1 req/sec)
-    if (i < pools.length - 1) await sleep(1200);
+    // Rate limiting: 5 keys × 5 RPM = 25 RPM total → ~2.5s gap
+    if (i < pools.length - 1) await sleep(2500);
   }
 
   console.log(`\nTotal unique candidates: ${walletMap.size}`);
