@@ -22,13 +22,37 @@ const BOT_DIR   = __dirname;
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const TELEGRAM_TOKEN = process.env.TELEGRAM_AGENT_TOKEN;
-const CHAT_ID        = process.env.TELEGRAM_CHAT_ID;
-
 if (!TELEGRAM_TOKEN) { console.error("TELEGRAM_AGENT_TOKEN not set in .env"); process.exit(1); }
-if (!CHAT_ID)        { console.error("TELEGRAM_CHAT_ID not set in .env"); process.exit(1); }
-const OR_KEY         = process.env.OPENROUTER_API_KEY;
-const MODEL          = "anthropic/claude-sonnet-4-5";
-const OR_BASE        = "https://openrouter.ai/api/v1";
+
+const OR_KEY  = process.env.OPENROUTER_API_KEY;
+const MODEL   = "anthropic/claude-sonnet-4-5";
+const OR_BASE = "https://openrouter.ai/api/v1";
+
+// ── Chat ID — load from env, fallback to user-config.json, auto-register on first msg ──
+const USER_CONFIG = path.join(BOT_DIR, "user-config.json");
+let chatId = process.env.TELEGRAM_CHAT_ID || null;
+
+function loadChatId() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(USER_CONFIG, "utf8"));
+    if (cfg.telegramAgentChatId) chatId = cfg.telegramAgentChatId;
+  } catch { /**/ }
+}
+
+function saveChatId(id) {
+  try {
+    const cfg = fs.existsSync(USER_CONFIG)
+      ? JSON.parse(fs.readFileSync(USER_CONFIG, "utf8"))
+      : {};
+    cfg.telegramAgentChatId = id;
+    fs.writeFileSync(USER_CONFIG, JSON.stringify(cfg, null, 2));
+    console.log(`[agent] Chat ID saved: ${id}`);
+  } catch (e) {
+    console.error(`[agent] Failed to save chat ID: ${e.message}`);
+  }
+}
+
+loadChatId();
 
 if (!OR_KEY) { console.error("OPENROUTER_API_KEY not set"); process.exit(1); }
 
@@ -250,7 +274,7 @@ async function tgSend(text) {
   await fetch(`${TG_BASE}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: CHAT_ID, text: text.slice(0, 4096) }),
+    body: JSON.stringify({ chat_id: chatId, text: text.slice(0, 4096) }),
   }).catch(() => {});
 }
 
@@ -388,7 +412,21 @@ async function poll() {
         offset = update.update_id + 1;
         const msg = update.message;
         if (!msg?.text) continue;
-        if (String(msg.chat.id) !== CHAT_ID) continue;
+
+        const incomingId = String(msg.chat.id);
+
+        // Auto-register first sender as owner
+        if (!chatId) {
+          chatId = incomingId;
+          saveChatId(chatId);
+          await tgSend(
+            "🤖 Meridian Claude Agent terdaftar!\n\n" +
+            "Chat ID kamu sudah disimpan. Ketik /help untuk daftar command."
+          );
+          continue;
+        }
+
+        if (incomingId !== chatId) continue;
 
         const text = msg.text.trim();
         console.log(`[in] ${text}`);
@@ -463,6 +501,6 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // ── Start ─────────────────────────────────────────────────────────────────────
 console.log("Meridian Claude Agent starting...");
 console.log(`  Model : ${MODEL}`);
-console.log(`  Chat  : ${CHAT_ID}`);
+console.log(`  Chat  : ${chatId || "(waiting for first message to register)"}`);
 tgSend("Meridian Claude Agent online. Ask me anything.").catch(() => {});
 poll();
