@@ -48,39 +48,54 @@ export function getRangeSelectionText(deployAmount, currentBalanceSol) {
 
 function _defaultRangeSelectionText(deployAmount, currentBalanceSol) {
   return `- RANGE SIZING (volatility-driven — do NOT use study_top_lpers avg_range_pct for range):
-  Size your range from the pool's CURRENT conditions, not historical LPer behavior:
+  Size your range from the pool's CURRENT conditions, not historical LPer behavior.
 
-  Pool Volatility  │ bid_ask range │ spot range  │ Reasoning
-  ─────────────────┼───────────────┼─────────────┼─────────────────────────────
-  >= 8  (extreme)  │ 35–50%        │ 45–60%      │ Wild swings but concentrate fees — OOR is managed by hard close
-  5–8   (high)     │ 30–40%        │ 40–50%      │ Active memecoin — tight range, max fee per bin
-  2–5   (moderate) │ 25–35%        │ 35–45%      │ Normal volatile pool — concentrate for speed
-  < 2   (low)      │ 20–30%        │ 30–40%      │ Ranging/stable — tight range captures most action
-  BIAS: Pick the MIDDLE of the range band. Tighter = more fee per bin = faster profit. OOR is handled by code-enforced hard close — don't over-widen out of fear.
+  ⚠️ HISTORICAL DATA: avg range used was 48.7% across 132 positions — 2x TOO WIDE. Target below.
 
-  Adjust from the table using your MEMORY and LESSONS:
-  - If LESSONS show repeated OOR downside on similar pools → go wider within the band
-  - If LESSONS show positions staying in range → go tighter for better fee concentration
-  - study_top_lpers patterns (hold time, strategy, win rate) are useful context but their avg_range_pct reflects a DIFFERENT market regime — do not copy it
+  Pool Volatility  │ bid_ask range │ spot range  │ Concrete target
+  ─────────────────┼───────────────┼─────────────┼──────────────────────────────────────
+  >= 8  (extreme)  │ 33–42%        │ 40–50%      │ bid_ask 35%, spot 42%
+  5–8   (high)     │ 26–34%        │ 33–42%      │ bid_ask 28%, spot 35%
+  2–5   (moderate) │ 20–28%        │ 27–35%      │ bid_ask 23%, spot 30%  ← avg pool is here
+  < 2   (low)      │ 16–22%        │ 22–28%      │ bid_ask 18%, spot 24%
+
+  CRITICAL BIAS: Use the LOWER END of each band — NOT the middle, NOT the upper.
+  WHY: 25% range at bin_step 100 = 29 bins near active price = high fee frequency.
+       50% range = 66 bins, half of them far from price = same capital, 2x lower fee rate.
+  OOR is handled by hard close (${config.management.outOfRangeWaitMinutes}min wait). Tight range + fast OOR exit = higher ROI than wide range + long hold.
+
+  BINS CALCULATION (mandatory — do NOT use config binsBelow directly):
+  Always compute: bins = ceil(log(1 - range_pct/100) / log(1 + bin_step/10000))
+  bin_step 100 at 23% range → 26 bins | bin_step 125 at 23% → 21 bins | bin_step 200 at 23% → 13 bins
+  DO NOT use the same binsBelow for different bin_steps. A 35-bin range at bs200 = 50% range = too wide.
+
+  IL COVERAGE CHECK (for tight range to be profitable):
+  - fee_active_tvl_ratio >= 0.15 over 30m → fees accrue fast enough to cover OOR IL
+  - volume >= $3k over 30m → consistent trade flow through your bins
+  - global_fees >= 20 SOL → real organic trading activity, not bundled
+  If fee/TVL < 0.12 over 30m, pool is too quiet for tight range — skip or use wider range.
+
+  Adjust from the table using MEMORY and LESSONS:
+  - LESSONS show repeated OOR downside → go slightly wider within band (but still lower half)
+  - LESSONS show consistent in-range → go to absolute lower end for max fee density
 
 - ATH PROXIMITY OVERRIDE:
-  If candidate shows ath >= ${config.screening.athTopThresholdPct ?? 90}% of all-time high, the token is near its peak with maximum downside risk.
-  Override bid_ask range to 65-80% regardless of volatility table. This provides extra downside buffer for the likely retrace from ATH.
+  If candidate shows ath >= ${config.screening.athTopThresholdPct ?? 90}% of all-time high, token is near peak with max downside risk.
+  Override bid_ask range to 55-65% (extra downside buffer for likely retrace from ATH).
 - MOMENTUM CHECK (5m vs 1h price change):
-  * 1h positive + 5m negative → PUMP FADING: the move is reversing. Widen range or skip.
+  * 1h positive + 5m negative → PUMP FADING: reversing. Use spot or skip.
   * 1h negative + 5m flat/positive → STABILIZING: good bid_ask entry on sell pressure.
-  * 1h positive + 5m positive → STILL PUMPING: bid_ask SOL will sit idle until sells come.
-  * Both flat → RANGING: safest entry, use volatility table as-is.
+  * 1h positive + 5m positive → STILL PUMPING: use spot — bid_ask SOL sits idle during pumps.
+  * Both flat → RANGING: safest bid_ask entry, use lower end of volatility band.
 
-- OOR DIRECTION MATTERS — widening range only helps if OOR matches the direction your liquidity extends:
-  * bid_ask (SOL below active bin): range extends DOWNWARD only. Wider range helps with DOWNSIDE OOR. Widening CANNOT fix upside OOR — price pumped above your liquidity and no amount of extra bins below will reach it.
-  * If you keep going OOR-upside on bid_ask, the problem is NOT range width — the token is pumping away from your position. Either wait for the pump to end, use a two-sided strategy with token exposure (sol_split_pct < 100), or skip the pool entirely.
-  * spot (SOL-only, bins below): same as bid_ask — wider only helps downside OOR.
-  * spot (two-sided): wider range helps BOTH directions since liquidity spans above and below.
-  * NEVER generate a lesson saying "use wider range" for upside OOR on a single-sided-below strategy. That analysis is fundamentally wrong.
+- OOR DIRECTION MATTERS — widening range only helps if OOR matches your liquidity direction:
+  * bid_ask (SOL below active bin): range extends DOWNWARD only. Cannot fix upside OOR.
+  * If you keep going OOR-upside on bid_ask, the problem is the token pumping — NOT range width. Switch to spot or skip.
+  * spot (two-sided): wider range helps BOTH directions.
+  * NEVER generate a lesson saying "use wider range" for upside OOR on a single-sided-below strategy.
 - COMPOUNDING: Deploy amount is ${deployAmount} SOL (scaled from wallet: ${currentBalanceSol ?? "?"} SOL). Do NOT override with a smaller amount.
 - After deploy: update_config setting=managementIntervalMin based on volatility (>=5→3, 2-5→5, <2→10).
-- Report: strategy chosen + why, price_range_pct used + volatility basis, deploy amount, interval set.`;
+- Report: strategy chosen + why, price_range_pct used + bins calculated + volatility basis, deploy amount, interval set.`;
 }
 
 /** Build default section texts (without config interpolation for manager_logic) */
@@ -182,50 +197,53 @@ Your goal: Find high-yield, high-volume pools and DEPLOY capital.
 ${screenerCriteria}
 
 STRATEGY SELECTION — MOMENTUM-BASED:
-   Choose strategy based on token momentum. Historical data: 71% of positions went OOR upside on bid_ask = missed profit.
+   ⚠️ HISTORICAL DATA: 122/132 positions used bid_ask, 67% closed OOR upside = missed fees.
+   Spot is UNDERUSED. Default toward spot unless token is clearly cooling/ranging.
 
    DECISION TREE (check in order):
-   A. MOMENTUM UP (use TWO-SIDED SPOT):
-      Deploy spot with sol_split_pct=80-85 when ANY of these momentum signals are present:
-      - change_1h > 5% (price rising in last hour)
-      - organic_score >= 80 AND volume is spiking relative to TVL
+   A. ANY POSITIVE MOMENTUM (use TWO-SIDED SPOT):
+      Deploy spot with sol_split_pct=82-87 when ANY signal is present:
+      - change_1h > 1% (even mild upward — don't wait for 5%)
+      - change_5m > 0.5% AND volume rising
+      - organic_score >= 78 AND volume/TVL ratio >= 0.3
       - study_top_lpers shows top LPers using two-sided/spot strategy
-      - Token just launched (<6h) with strong narrative and rising volume
-      This captures fees from BOTH directions — pump AND pullback.
+      - Token just launched (<6h) with narrative and rising volume
+      Spot captures fees from BOTH pump AND pullback. Risk is small with sol_split=82-87%.
 
-   B. SIDEWAYS / COOLING (use BID_ASK):
-      Deploy bid_ask when:
-      - change_1h is flat or mildly negative (-15% to +3%)
-      - Volume declining or stable, no momentum signal
-      - Token has been ranging or pulling back normally
-      Bid_ask is safe here — you earn fees when price dips into your range.
-      Normal Solana dips (-5% to -15%) are NOT dumps — still deploy bid_ask.
+   B. CONFIRMED COOLING / RANGING (use BID_ASK):
+      Deploy bid_ask ONLY when ALL of these are true:
+      - change_1h is flat or negative (-20% to +1%)
+      - change_5m is also flat or negative
+      - Volume stable or declining — no momentum signal visible
+      - Pool shows ranging pattern, price oscillating around active bin
+      Bid_ask earns fees when price dips into range. Good for confirmed bearish/sideways.
 
-   C. MOMENTUM DOWN (SKIP):
+   C. PANIC / DUMP (SKIP):
       Do NOT deploy when:
-      - change_1h < -20% (rug/panic dump)
-      - Volume spike with price dropping (panic selling)
-      - Narrative is dead, organic declining
-      Wait for stabilization.
+      - change_1h < -20% (rug or panic)
+      - Volume spiking but price crashing (panic selling)
+      - Narrative dead, organic collapsing
+      Wait for stabilization before entry.
 
    SPOT EXECUTION RULES:
-   - sol_split_pct MUST be 80-90% (mostly SOL, minimal token exposure)
-   - Never go below sol_split_pct = 80% (too much token risk)
-   - Pass sol_split_pct with the deploy. The executor auto-swaps the token portion via Jupiter.
-   - You do NOT need to pre-buy tokens. Just provide total SOL as amount_y + sol_split_pct.
-   - Range should be 5-10% wider than bid_ask equivalent (more bins = more room for two-sided action)
+   - sol_split_pct = 82-87% (mostly SOL, small token exposure = bidirectional fee capture)
+   - Never below sol_split_pct = 80% (too much token risk)
+   - Pass sol_split_pct with deploy. Executor auto-swaps token portion via Jupiter.
+   - You do NOT need to pre-buy tokens. Pass total SOL + sol_split_pct, executor handles swap.
+   - Spot range = same as bid_ask equivalent from volatility table (not 5-10% wider)
 
 SPOT STRATEGY BIN DIRECTION — CRITICAL:
    - SOL (Y / quote) fills bins BELOW the active bin only
    - Base token (X) fills bins ABOVE the active bin only
-   - Two-sided spot with sol_split_pct < 100: system auto-splits bins below AND above based on sol_split_pct
-   - SOL-only spot (sol_split=100): set bins_below = range, bins_above = 0 (same direction as bid_ask)
+   - Two-sided spot with sol_split_pct < 100: system auto-splits bins below AND above
+   - SOL-only spot (sol_split=100): set bins_below = range, bins_above = 0 (same as bid_ask)
    - If depositing only SOL, NEVER set bins_above > 0 — those bins will be empty and waste range
 
-WHY MOMENTUM-BASED:
-   Old approach (always bid_ask): 71% OOR upside, 29 out of 41 positions earned near-zero fees.
-   Spot WITH sol_split (80-90%) captures fees in both directions — wins when token pumps AND when it pulls back.
-   bid_ask is still valuable for sideways/cooling markets where you want to catch dips safely.
+WHY SPOT IS DEFAULT:
+   Historical: 122 bid_ask with 67% OOR upside = SOL sat idle during pumps, zero fees.
+   Spot sol_split=85 means 85% SOL exposure below + 15% token above = fees in BOTH directions.
+   With 85% SOL split, downside risk barely differs from pure bid_ask.
+   bid_ask is still correct for confirmed ranging/cooling — but that is the minority case.
 `;
     if (signalWeights) {
       prompt += `
