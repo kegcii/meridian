@@ -101,11 +101,11 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // ── Helpers ───────────────────────────────────────────────────────
 function pnlMark(pnlPct) {
   const p = pnlPct ?? 0;
-  if (p >= 1)   return "▲";
-  if (p > 0)    return "▲";
-  if (p === 0)  return "─";
-  if (p > -5)   return "▼";
-  return "▼▼";
+  if (p >= 1)  return "🟢";
+  if (p > 0)   return "🟡";
+  if (p === 0) return "⬜";
+  if (p > -5)  return "🔴";
+  return "💀";
 }
 
 function formatPnl(pnlSol, pnlUsd, pnlPct, unit = "sol") {
@@ -163,16 +163,16 @@ on("close", async (data) => {
   const pair   = data.pair || "Position";
 
   const rows = [
-    [`PnL`,      `${mark}  <b>${pnl}</b>`],
-    strat  ? [`Strategy`, strat]  : null,
-    held   ? [`Held`,     held]   : null,
-    reason ? [`Reason`,   reason] : null,
+    [`💰 PnL`,      `${mark}  <b>${pnl}</b>`],
+    strat  ? [`📊 Strategy`, strat]  : null,
+    held   ? [`⏱ Held`,     held]   : null,
+    reason ? [`📌 Reason`,   reason] : null,
   ].filter(Boolean);
 
   const pad = Math.max(...rows.map(r => r[0].length));
   const body = rows.map(([k, v]) => `  ${k.padEnd(pad)}  ${v}`).join("\n");
 
-  await send(`<b>${pair}</b>  —  closed\n\n${body}`);
+  await send(`🔒 <b>${pair}</b>  —  closed\n\n${body}`);
 });
 
 on("pnl_watcher_close", async (data) => {
@@ -185,13 +185,13 @@ on("pnl_watcher_close", async (data) => {
   const pair   = data.pair || "Position";
 
   const rows = [
-    [`PnL`,    `${mark}  <b>${pnl}</b>`],
-    [`Reason`, reason],
+    [`💰 PnL`,    `${mark}  <b>${pnl}</b>`],
+    [`📌 Reason`, reason],
   ];
   const pad  = Math.max(...rows.map(r => r[0].length));
   const body = rows.map(([k, v]) => `  ${k.padEnd(pad)}  ${v}`).join("\n");
 
-  await send(`<b>${pair}</b>  —  emergency close\n\n${body}`);
+  await send(`⚡ <b>${pair}</b>  —  emergency close\n\n${body}`);
 });
 
 // ── Init ─────────────────────────────────────────────────────────
