@@ -13,6 +13,7 @@
     "test:screen": "node test/test-screening.js",
     "test:agent": "DRY_RUN=true node test/test-agent.js",
     "test:runtime": "node --test test/test-runtime-fixes.js",
+    "tele-agent": "node tele-agent.js",
     "postinstall": "node scripts/patch-anchor.js"
   },
   "dependencies": {

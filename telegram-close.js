@@ -162,36 +162,32 @@ on("close", async (data) => {
   const reason = formatReason(data.reason);
   const pair   = data.pair || "Position";
 
-  const rows = [
-    [`💰 PnL`,      `${mark}  <b>${pnl}</b>`],
-    strat  ? [`📊 Strategy`, strat]  : null,
-    held   ? [`⏱ Held`,     held]   : null,
-    reason ? [`📌 Reason`,   reason] : null,
-  ].filter(Boolean);
+  const lines = [
+    `🔒 <b>${pair}</b> — closed  ${mark}`,
+    ``,
+    `💰 <b>${pnl}</b>`,
+    strat  ? `📊 ${strat}`   : null,
+    held   ? `⏱ Held: ${held}` : null,
+    reason ? `📌 ${reason}`  : null,
+  ].filter(v => v !== null);
 
-  const pad = Math.max(...rows.map(r => r[0].length));
-  const body = rows.map(([k, v]) => `  ${k.padEnd(pad)}  ${v}`).join("\n");
-
-  await send(`🔒 <b>${pair}</b>  —  closed\n\n${body}`);
+  await send(lines.join("\n"));
 });
 
 on("pnl_watcher_close", async (data) => {
   if (!isEnabled()) return;
   const { config } = await import("./config.js");
-  const unit   = config.management?.pnlUnit || "sol";
-  const mark   = pnlMark(data.pnlPct);
-  const pnl    = formatPnl(data.pnlSol, data.pnlUsd, data.pnlPct, unit);
-  const reason = data.reason || "PnL watcher triggered";
-  const pair   = data.pair || "Position";
+  const unit  = config.management?.pnlUnit || "sol";
+  const mark  = pnlMark(data.pnlPct);
+  const pnl   = formatPnl(data.pnlSol, data.pnlUsd, data.pnlPct, unit);
+  const pair  = data.pair || "Position";
 
-  const rows = [
-    [`💰 PnL`,    `${mark}  <b>${pnl}</b>`],
-    [`📌 Reason`, reason],
-  ];
-  const pad  = Math.max(...rows.map(r => r[0].length));
-  const body = rows.map(([k, v]) => `  ${k.padEnd(pad)}  ${v}`).join("\n");
-
-  await send(`⚡ <b>${pair}</b>  —  emergency close\n\n${body}`);
+  await send([
+    `⚡ <b>${pair}</b> — emergency close  ${mark}`,
+    ``,
+    `💰 <b>${pnl}</b>`,
+    `📌 ${data.reason || "PnL watcher triggered"}`,
+  ].join("\n"));
 });
 
 // ── Init ─────────────────────────────────────────────────────────

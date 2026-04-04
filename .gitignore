@@ -23,6 +23,7 @@ activity.json
 
 # Logs
 logs/
+*.log
 
 # Web UI
 web/node_modules/

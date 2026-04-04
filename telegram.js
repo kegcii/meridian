@@ -139,7 +139,7 @@ export function stopPolling() {
 // ── Helpers ───────────────────────────────────────────────────────
 function pnlMark(pnlPct) {
   const p = pnlPct ?? 0;
-  if (p >= 1)  return "🟢";
+  if (p >= 2)  return "🟢";
   if (p > 0)   return "🟡";
   if (p === 0) return "⬜";
   if (p > -5)  return "🔴";
@@ -149,8 +149,8 @@ function pnlMark(pnlPct) {
 function fmtPnl(pnlSol, pnlUsd, pnlPct, unit = "sol") {
   const sign = (pnlPct ?? 0) >= 0 ? "+" : "";
   const pct  = `${sign}${(pnlPct ?? 0).toFixed(2)}%`;
-  if (unit === "sol" && pnlSol != null) return `${sign}${pnlSol.toFixed(4)} SOL  (${pct})`;
-  return `${sign}$${(pnlUsd ?? 0).toFixed(2)}  (${pct})`;
+  if (unit === "sol" && pnlSol != null) return `${sign}${Math.abs(pnlSol).toFixed(4)} SOL (${pct})`;
+  return `${sign}$${Math.abs(pnlUsd ?? 0).toFixed(2)} (${pct})`;
 }
 
 function fmtHeld(min) {
@@ -163,12 +163,12 @@ function fmtHeld(min) {
 function fmtReason(reason) {
   if (!reason) return null;
   const map = {
-    "agent decision (OOR upside)":  "OOR upside — price pumped above range",
-    "agent decision (OOR downside)": "OOR downside — price fell below range",
-    "agent decision":               "closed by agent",
-    "trailing_stop":                "trailing stop hit",
-    "stop_loss":                    "stop-loss hit",
-    "take_profit":                  "take-profit hit",
+    "agent decision (OOR upside)":   "⬆️ OOR upside — price pumped above range",
+    "agent decision (OOR downside)":  "⬇️ OOR downside — price fell below range",
+    "agent decision":                 "closed by agent",
+    "trailing_stop":                  "trailing stop hit",
+    "stop_loss":                      "stop-loss hit",
+    "take_profit":                    "take-profit hit",
   };
   for (const [k, v] of Object.entries(map)) {
     if (reason.includes(k)) return v;
@@ -179,63 +179,139 @@ function fmtReason(reason) {
 function fmtStrat(strategy, solSplitPct) {
   if (!strategy) return null;
   const side = (solSplitPct != null && solSplitPct < 100)
-    ? `two-sided  ${solSplitPct}/${100 - solSplitPct}`
+    ? `two-sided ${solSplitPct}/${100 - solSplitPct}`
     : "one-sided";
-  return `${strategy}  ${side}`;
+  return `${strategy} · ${side}`;
 }
 
-function table(rows) {
-  const pad = Math.max(...rows.map(r => r[0].length));
-  return rows.map(([k, v]) => `  ${k.padEnd(pad)}  ${v}`).join("\n");
+// Convert LLM markdown (**bold**, *italic*) to Telegram HTML
+function mdToHtml(text) {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/\*([^*]+)\*/g,     "<i>$1</i>")
+    .replace(/`([^`]+)`/g,       "<code>$1</code>");
+}
+
+// Parse management report into structured position blocks
+function parseMgmtBlocks(report) {
+  const blocks = [];
+  let cur = null;
+  for (const line of report.split("\n")) {
+    const h = line.match(/\*{0,2}([A-Z0-9_\-/]+(?:-SOL|-USDC|-USDT)?)\*{0,2}\s*\|\s*Age:\s*([^|]+)\|\s*(?:Fees?:\s*([^|]+)\|)?\s*PnL:\s*([^|]+)\|\s*OOR:\s*(.+)/i);
+    if (h) {
+      if (cur) blocks.push(cur);
+      cur = { pair: h[1].trim(), age: h[2].trim(), fees: h[3]?.trim(), pnl: h[4].trim(), oor: h[5].trim() };
+      continue;
+    }
+    if (!cur) continue;
+    const dec = line.match(/\*{0,2}Decision:\*{0,2}\s*(STAY|HOLD|CLOSE)/i);
+    const rsn = line.match(/\*{0,2}Reason:\*{0,2}\s*(.+)/i);
+    if (dec) cur.decision = dec[1].toUpperCase();
+    if (rsn) cur.reason   = rsn[1].trim();
+  }
+  if (cur) blocks.push(cur);
+  return blocks;
 }
 
 // ── Notification functions ────────────────────────────────────────
 export async function notifyDeploy({ pair, amountSol, strategy, solSplitPct, position, tx }) {
   const strat = fmtStrat(strategy, solSplitPct);
-  const rows = [
-    ["💰 Amount",   `${amountSol} SOL`],
-    strat ? ["📊 Strategy", strat] : null,
-    ["📍 Position", `<code>${(position || "").slice(0, 8)}...</code>`],
-    tx    ? ["🔗 Tx",       `<code>${tx.slice(0, 16)}...</code>`] : null,
-  ].filter(Boolean);
-  await sendHTML(`🚀 <b>${pair}</b>  —  deployed\n\n${table(rows)}`);
+  const lines = [
+    `🚀 <b>${pair}</b> — deployed`,
+    ``,
+    `💰 ${amountSol} SOL`,
+    strat ? `📊 ${strat}` : null,
+    `📍 <code>${(position || "").slice(0, 10)}…</code>`,
+    tx ? `🔗 <code>${tx.slice(0, 20)}…</code>` : null,
+  ].filter(v => v !== null);
+  await sendHTML(lines.join("\n"));
 }
 
 export async function notifyClose({ pair, pnlUsd, pnlSol, pnlPct, strategy, solSplitPct, minutesHeld, reason }) {
   const { config } = await import("./config.js");
-  const unit   = config.management.pnlUnit || "sol";
-  const mark   = pnlMark(pnlPct);
-  const pnl    = fmtPnl(pnlSol, pnlUsd, pnlPct, unit);
-  const strat  = fmtStrat(strategy, solSplitPct);
-  const held   = fmtHeld(minutesHeld);
-  const rsn    = fmtReason(reason);
-  const rows = [
-    ["💰 PnL",      `${mark}  <b>${pnl}</b>`],
-    strat ? ["📊 Strategy", strat] : null,
-    held  ? ["⏱ Held",     held]  : null,
-    rsn   ? ["📌 Reason",  rsn]   : null,
-  ].filter(Boolean);
-  await sendHTML(`🔒 <b>${pair}</b>  —  closed\n\n${table(rows)}`);
+  const unit  = config.management.pnlUnit || "sol";
+  const mark  = pnlMark(pnlPct);
+  const pnl   = fmtPnl(pnlSol, pnlUsd, pnlPct, unit);
+  const strat = fmtStrat(strategy, solSplitPct);
+  const held  = fmtHeld(minutesHeld);
+  const rsn   = fmtReason(reason);
+  const lines = [
+    `🔒 <b>${pair}</b> — closed  ${mark}`,
+    ``,
+    `💰 <b>${pnl}</b>`,
+    strat ? `📊 ${strat}` : null,
+    held  ? `⏱ Held: ${held}` : null,
+    rsn   ? `📌 ${rsn}` : null,
+  ].filter(v => v !== null);
+  await sendHTML(lines.join("\n"));
 }
 
 export async function notifyOutOfRange({ pair, minutesOOR, direction }) {
-  const dir = direction === "upside" ? "price pumped above range" :
-              direction === "downside" ? "price fell below range" : "";
-  const rows = [
-    ["⏱ Duration", `${minutesOOR} min OOR`],
-    dir ? ["📌 Direction", dir] : null,
-  ].filter(Boolean);
-  await sendHTML(`⚠️ <b>${pair}</b>  —  out of range\n\n${table(rows)}`);
+  const dirIcon = direction === "upside" ? "⬆️" : direction === "downside" ? "⬇️" : "↔️";
+  const dirText = direction === "upside" ? "price pumped above range"
+                : direction === "downside" ? "price fell below range"
+                : "out of range";
+  await sendHTML(
+    `⚠️ <b>${pair}</b> — out of range\n\n${dirIcon} ${dirText}\n⏱ ${minutesOOR} min OOR`
+  );
 }
 
 export async function notifyCycleSummary({ cycleType, positions, walletSol }) {
   const icon  = cycleType === "management" ? "🔄" : "🔍";
   const label = cycleType === "management" ? "Management" : "Screening";
-  const rows  = [
-    ["📂 Positions", `${positions} open`],
-    ["💎 Wallet",    `${walletSol} SOL`],
-  ];
-  await sendHTML(`${icon} <b>${label} cycle</b>\n\n${table(rows)}`);
+  await sendHTML(`${icon} <b>${label} cycle</b>\n\n📂 ${positions} posisi terbuka\n💎 ${walletSol} SOL`);
+}
+
+function formatMgmtCycleHtml(report) {
+  const blocks = parseMgmtBlocks(report);
+
+  if (!blocks.length) {
+    // No structured blocks found — fallback: convert markdown and send raw
+    const cleaned = mdToHtml(report).slice(0, 3500);
+    return `🔄 <b>Management Cycle</b>\n\n${cleaned}`;
+  }
+
+  const stays  = blocks.filter(b => !b.decision || b.decision === "STAY" || b.decision === "HOLD");
+  const closes = blocks.filter(b => b.decision === "CLOSE");
+
+  const lines = [`🔄 <b>Management Cycle</b>  —  ${blocks.length} posisi`];
+
+  for (const b of closes) {
+    const mark = pnlMark(parseFloat(b.pnl));
+    lines.push(``, `🔒 <b>CLOSE</b>  ${b.pair}  ${mark}`);
+    lines.push(`   Age: ${b.age}  •  PnL: ${b.pnl}  •  OOR: ${b.oor}`);
+    if (b.reason) lines.push(`   📌 ${b.reason.slice(0, 120)}`);
+  }
+
+  for (const b of stays) {
+    const mark = pnlMark(parseFloat(b.pnl));
+    lines.push(``, `✅ <b>HOLD</b>  ${b.pair}  ${mark}`);
+    lines.push(`   Age: ${b.age}  •  PnL: ${b.pnl}  •  OOR: ${b.oor}`);
+    if (b.reason) lines.push(`   📌 ${b.reason.slice(0, 100)}`);
+  }
+
+  return lines.join("\n").slice(0, 4000);
+}
+
+function formatScreenCycleHtml(report) {
+  const lower = report.toLowerCase();
+  const deployed = lower.includes("deploy") && (lower.includes("success") || lower.includes("position opened") || lower.includes("deployed"));
+  const noCandidate = lower.includes("no candidate") || lower.includes("no suitable") || lower.includes("no pools") || lower.includes("skipping");
+
+  // Try to extract deployed pair name
+  let deployLine = "";
+  const dm = report.match(/deploy(?:ed)?[^a-z]*([A-Z0-9]{2,10}-SOL)/i);
+  if (dm) deployLine = `\n🚀 ${dm[1]}`;
+
+  const summary = deployed
+    ? `🟢 Deploy berhasil${deployLine}`
+    : noCandidate
+      ? `📭 Tidak ada kandidat yang lolos threshold`
+      : `ℹ️ Cycle selesai`;
+
+  // Take first 2000 chars of report, convert markdown
+  const body = mdToHtml(report.slice(0, 2000));
+  return `🔍 <b>Screening Cycle</b>\n\n${summary}\n\n<i>${body}</i>`.slice(0, 4000);
 }
 
 function sleep(ms) {
@@ -249,12 +325,14 @@ on("out_of_range", (data) => { if (isEnabled()) notifyOutOfRange(data).catch(() 
 on("pnl_watcher_close", (data) => {
   if (!isEnabled()) return;
   const mark = pnlMark(data.pnlPct);
-  const rows = [
-    ["💰 PnL",    `${mark}  <b>${fmtPnl(data.pnlSol, data.pnlUsd, data.pnlPct)}</b>`],
-    ["📌 Reason", data.reason || "PnL watcher triggered"],
-  ];
-  sendHTML(`⚡ <b>${data.pair}</b>  —  emergency close\n\n${table(rows)}`).catch(() => {});
+  const pnl  = fmtPnl(data.pnlSol, data.pnlUsd, data.pnlPct);
+  sendHTML([
+    `⚡ <b>${data.pair}</b> — emergency close  ${mark}`,
+    ``,
+    `💰 <b>${pnl}</b>`,
+    `📌 ${data.reason || "PnL watcher triggered"}`,
+  ].join("\n")).catch(() => {});
 });
-on("cycle:management", ({ report }) => { if (isEnabled()) sendMessage(`🔄 Management Cycle\n\n${report}`).catch(() => {}); });
-on("cycle:screening",  ({ report }) => { if (isEnabled()) sendMessage(`🔍 Screening Cycle\n\n${report}`).catch(() => {}); });
+on("cycle:management", ({ report }) => { if (isEnabled()) sendHTML(formatMgmtCycleHtml(report)).catch(() => {}); });
+on("cycle:screening",  ({ report }) => { if (isEnabled()) sendHTML(formatScreenCycleHtml(report)).catch(() => {}); });
 on("briefing", ({ html }) => { if (isEnabled()) sendHTML(html).catch(() => {}); });
