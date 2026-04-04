@@ -160,6 +160,20 @@ export function useWebSocket() {
             if (isCandidateData(msg.candidates)) setCandidates(msg.candidates);
             if (msg.lpOverview) setLpOverview(msg.lpOverview);
             if (msg.strategyBreakdown) setStrategyBreakdown(msg.strategyBreakdown);
+            if (Array.isArray(msg.activity) && msg.activity.length > 0) {
+              setNotifications((prev) => {
+                const existingIds = new Set(prev.map((n) => n.id));
+                const restored = msg.activity
+                  .filter((a: { id: string }) => !existingIds.has(a.id))
+                  .map((a: { id: string; event: string; data: Record<string, unknown>; ts: string }) => ({
+                    id: a.id,
+                    event: a.event,
+                    data: a.data,
+                    ts: a.ts,
+                  }));
+                return [...prev, ...restored].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()).slice(0, 100);
+              });
+            }
             break;
           case "chat:response":
             setMessages((prev) => [...prev, { role: "assistant", content: msg.text, ts: msg.ts }]);

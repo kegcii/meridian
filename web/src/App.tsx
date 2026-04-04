@@ -35,8 +35,8 @@ export default function App() {
       <StatusBar connected={connected} status={status} timers={timers} wallet={wallet} onOpenGraph={() => setGraphOpen(true)} />
 
       <div className="flex flex-1 flex-col overflow-hidden lg:flex-row" style={{ minHeight: 0 }}>
-        {/* Chat panel */}
-        <div className="flex flex-col overflow-hidden border-b border-white/8 bg-[linear-gradient(180deg,rgba(2,24,33,0.72),rgba(0,15,20,0.82))] lg:flex-[1.08] lg:border-b-0 lg:border-r" style={{ minHeight: 0, flex: "1.08 1 0%" }}>
+        {/* Chat panel — smaller on mobile */}
+        <div className="flex flex-col overflow-hidden border-b border-white/8 bg-[linear-gradient(180deg,rgba(2,24,33,0.72),rgba(0,15,20,0.82))] max-h-[35vh] sm:max-h-[40vh] lg:max-h-none lg:flex-[1.08] lg:border-b-0 lg:border-r" style={{ minHeight: 0 }}>
           <ChatPanel
             messages={messages}
             status={status}
@@ -48,8 +48,8 @@ export default function App() {
           />
         </div>
 
-        {/* Data Sidebar */}
-        <div className="flex flex-col overflow-y-auto bg-[linear-gradient(180deg,rgba(8,31,40,0.54),rgba(0,15,20,0.72))] lg:flex-[0.92]" style={{ minHeight: 0 }}>
+        {/* Data Sidebar — primary view on mobile */}
+        <div className="flex flex-1 flex-col overflow-y-auto bg-[linear-gradient(180deg,rgba(8,31,40,0.54),rgba(0,15,20,0.72))] lg:flex-[0.92]" style={{ minHeight: 0 }}>
           <DataSidebar
             positions={positions}
             wallet={wallet}

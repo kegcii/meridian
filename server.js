@@ -36,6 +36,24 @@ let _startupCache = { wallet: null, positions: null, candidates: null, lpOvervie
 export function setStartupCache({ wallet, positions, candidates, lpOverview }) {
   _startupCache = { wallet, positions, candidates, lpOverview, ts: Date.now() };
 }
+
+// ── Activity buffer — persists across restarts ──
+const ACTIVITY_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "activity.json");
+const MAX_ACTIVITY = 200;
+let _activityBuffer = [];
+try {
+  if (fs.existsSync(ACTIVITY_FILE)) {
+    _activityBuffer = JSON.parse(fs.readFileSync(ACTIVITY_FILE, "utf8")).slice(-MAX_ACTIVITY);
+  }
+} catch { _activityBuffer = []; }
+
+function pushActivity(event, data) {
+  const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, event, data, ts: new Date().toISOString() };
+  _activityBuffer.push(entry);
+  if (_activityBuffer.length > MAX_ACTIVITY) _activityBuffer = _activityBuffer.slice(-MAX_ACTIVITY);
+  try { fs.writeFileSync(ACTIVITY_FILE, JSON.stringify(_activityBuffer), "utf8"); } catch {}
+  return entry;
+}
 import { getPerformanceSummary, getPerformanceHistory, listLessons, evolveThresholds } from "./lessons.js";
 import { getMemoryDashboardData } from "./memory.js";
 import { loadWeights } from "./signal-weights.js";
@@ -268,12 +286,14 @@ export function startServer(timersFn) {
 
   for (const eventName of FORWARDED_EVENTS) {
     on(eventName, (data) => {
+      pushActivity(eventName, data);
       broadcast(wss, { type: "notification", event: eventName, data });
     });
   }
 
   // Post-cycle data broadcasts — send notification + fresh structured data
   on("cycle:management", async (data) => {
+    pushActivity("cycle:management", data);
     broadcast(wss, { type: "notification", event: "cycle:management", data });
     const [pos, wal] = await Promise.allSettled([getMyPositions(), getWalletBalances()]);
     if (pos.status === "fulfilled") broadcast(wss, { type: "positions", data: pos.value });
@@ -281,6 +301,7 @@ export function startServer(timersFn) {
   });
 
   on("cycle:screening", async (data) => {
+    pushActivity("cycle:screening", data);
     broadcast(wss, { type: "notification", event: "cycle:screening", data });
     const cands = await getTopCandidates({ limit: 5 }).catch(() => null);
     if (cands) broadcast(wss, { type: "candidates", data: normalizeCandidatesPayload(cands) });
@@ -367,6 +388,7 @@ export function startServer(timersFn) {
       candidates: candidateResult.status === "fulfilled" ? normalizeCandidatesPayload(candidateResult.value) : null,
       lpOverview: lpOverviewResult.status === "fulfilled" ? lpOverviewResult.value : null,
       strategyBreakdown: (() => { try { const s = getPerformanceSummary(); return s?.by_strategy ?? null; } catch { return null; } })(),
+      activity: _activityBuffer.slice(-50),
     });
 
     // ── Incoming messages ──

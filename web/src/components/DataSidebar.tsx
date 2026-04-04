@@ -25,19 +25,19 @@ export default function DataSidebar({ positions, wallet, candidates, notificatio
   const openPositions = positions?.total_positions ?? 0;
 
   return (
-    <Tabs defaultValue="dashboard" className="flex h-full flex-col gap-3 px-3 py-3 lg:px-4">
-      <div className="flex items-start justify-between gap-3 rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,209,102,0.08),rgba(255,209,102,0.02))] px-4 py-3 shadow-[0_18px_34px_rgba(0,0,0,0.16)]">
-        <div className="flex flex-col gap-1.5">
-          <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-amber-200/70">
+    <Tabs defaultValue="dashboard" className="flex h-full flex-col gap-2 sm:gap-3 px-2 sm:px-3 py-2 sm:py-3 lg:px-4">
+      <div className="flex items-start justify-between gap-2 sm:gap-3 rounded-[20px] sm:rounded-[28px] border border-white/8 bg-[linear-gradient(180deg,rgba(255,209,102,0.08),rgba(255,209,102,0.02))] px-3 sm:px-4 py-2.5 sm:py-3 shadow-[0_18px_34px_rgba(0,0,0,0.16)]">
+        <div className="flex flex-col gap-1 sm:gap-1.5">
+          <span className="font-mono text-[9px] sm:text-[10px] uppercase tracking-[0.22em] text-amber-200/70">
             Mission Control
           </span>
-          <div className="flex flex-wrap items-end gap-x-3 gap-y-1">
-            <span className="text-xl font-semibold tracking-tight text-cream">Trading Desk</span>
-            <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-ash/56">
+          <div className="flex flex-wrap items-end gap-x-2 sm:gap-x-3 gap-y-1">
+            <span className="text-lg sm:text-xl font-semibold tracking-tight text-cream">Trading Desk</span>
+            <span className="font-mono text-[10px] sm:text-[11px] uppercase tracking-[0.16em] text-ash/56">
               {openPositions} open positions
             </span>
           </div>
-          <span className="max-w-md text-sm text-cream/76">
+          <span className="max-w-md text-xs sm:text-sm text-cream/76 hidden sm:block">
             Portfolio state, ranked deploys, and live activity with faster decision paths.
           </span>
         </div>

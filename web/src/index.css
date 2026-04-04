@@ -153,3 +153,16 @@ body::after {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--color-teal); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-steel); }
+
+/* Mobile optimizations */
+@media (max-width: 640px) {
+  ::-webkit-scrollbar { width: 3px; }
+
+  /* Prevent iOS bounce */
+  html { overflow: hidden; overscroll-behavior: none; }
+
+  /* Better touch scrolling */
+  .overflow-y-auto, .overflow-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+}
