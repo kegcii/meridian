@@ -172,6 +172,7 @@ async function analyzeAndGenerate(perfData, lessons, cfg, state) {
     .join("\n");
 
   const llmModel = cfg.autoresearch?.llmModel ?? "openai/gpt-5.4-nano";
+  const fallbackModel = config.llm?.screeningModel;
   let hypothesis, modifiedText;
 
   try {
@@ -179,8 +180,19 @@ async function analyzeAndGenerate(perfData, lessons, cfg, state) {
     hypothesis = result.hypothesis;
     modifiedText = result.modifiedText;
   } catch (e) {
-    log("autoresearch", `LLM call failed: ${e.message}`);
-    return;
+    log("autoresearch", `Primary LLM failed (${e.message}), trying fallback: ${fallbackModel}`);
+    if (!fallbackModel || fallbackModel === llmModel) {
+      log("autoresearch", "No fallback available, skipping cycle");
+      return;
+    }
+    try {
+      const result = await callLLM(fallbackModel, worstSection, worstCount, currentText, failureDesc);
+      hypothesis = result.hypothesis;
+      modifiedText = result.modifiedText;
+    } catch (e2) {
+      log("autoresearch", `Fallback also failed (${e2.message}), skipping cycle`);
+      return;
+    }
   }
 
   if (!modifiedText || modifiedText.trim() === currentText.trim()) {
@@ -374,8 +386,14 @@ async function callLLM(model, sectionName, lossCount, currentText, failureDesc) 
     minimax:    { baseURL: "https://api.minimax.io/v1",      apiKey: process.env.MINIMAX_API_KEY },
     openai:     { baseURL: "https://api.openai.com/v1",      apiKey: process.env.OPENAI_API_KEY },
   };
-  // Autoresearch uses the general provider by default
-  const prov = config.llm?.generalProvider || process.env.LLM_PROVIDER || "openrouter";
+  // Provider resolution: explicit autoresearchProvider > infer from model string > generalProvider > default
+  // OpenRouter-style model IDs contain "/" (e.g. "openai/gpt-5.4-nano") — always route to OpenRouter
+  function resolveProvider() {
+    if (config.llm?.autoresearchProvider) return config.llm.autoresearchProvider;
+    if (model && model.includes("/")) return "openrouter";
+    return config.llm?.generalProvider || process.env.LLM_PROVIDER || "openrouter";
+  }
+  const prov = resolveProvider();
   const cfg = PROVIDER_MAP[prov] || PROVIDER_MAP.openrouter;
   if (!cfg.apiKey) throw new Error(`${prov.toUpperCase()} API key not set`);
 
