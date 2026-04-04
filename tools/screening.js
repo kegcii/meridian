@@ -101,7 +101,7 @@ export async function discoverPools({
   }
   
   return {
-    total: data.total,
+    total: allPools.length,
     pools,
   };
 }
