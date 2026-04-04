@@ -99,72 +99,99 @@ async function send(text) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ── Helpers ───────────────────────────────────────────────────────
+function pnlMark(pnlPct) {
+  const p = pnlPct ?? 0;
+  if (p >= 1)   return "▲";
+  if (p > 0)    return "▲";
+  if (p === 0)  return "─";
+  if (p > -5)   return "▼";
+  return "▼▼";
+}
+
 function formatPnl(pnlSol, pnlUsd, pnlPct, unit = "sol") {
-  const sign = (pnlPct ?? 0) >= 0 ? "+" : "";
-  const pct  = `${sign}${(pnlPct ?? 0).toFixed(2)}%`;
+  const p    = pnlPct ?? 0;
+  const sign = p >= 0 ? "+" : "";
+  const pct  = `${sign}${p.toFixed(2)}%`;
   if (unit === "sol" && pnlSol != null) {
-    return `${sign}${pnlSol.toFixed(4)} SOL  (${pct})`;
+    return `${sign}${Math.abs(pnlSol).toFixed(4)} SOL  (${pct})`;
   }
-  return `${sign}$${(pnlUsd ?? 0).toFixed(2)}  (${pct})`;
+  return `${sign}$${Math.abs(pnlUsd ?? 0).toFixed(2)}  (${pct})`;
 }
 
 function formatStrategy(strategy, solSplitPct) {
   if (!strategy) return null;
-  if (solSplitPct != null && solSplitPct < 100) {
-    const tokenPct = 100 - solSplitPct;
-    return `${strategy} two-sided  ${solSplitPct}% SOL / ${tokenPct}% token`;
-  }
-  return `${strategy} one-sided`;
+  const side = (solSplitPct != null && solSplitPct < 100)
+    ? `two-sided  ${solSplitPct}/${100 - solSplitPct}`
+    : "one-sided";
+  return `${strategy}  ${side}`;
+}
+
+function formatHeld(min) {
+  if (min == null) return null;
+  if (min < 60)  return `${min}m`;
+  const h = Math.floor(min / 60), m = min % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
 function formatReason(reason) {
   if (!reason) return null;
-  return reason
-    .replace("agent decision (OOR upside)", "OOR upside — price pumped above range")
-    .replace("agent decision (OOR downside)", "OOR downside — price dropped below range")
-    .replace("agent decision", "agent decision")
-    .replace("pnl_watcher", "emergency auto-close")
-    .replace("trailing_stop", "trailing stop hit")
-    .replace("stop_loss", "stop-loss hit")
-    .replace("take_profit", "take-profit hit");
+  const map = {
+    "agent decision (OOR upside)":   "OOR upside — price pumped above range",
+    "agent decision (OOR downside)":  "OOR downside — price fell below range",
+    "agent decision":                 "closed by agent",
+    "trailing_stop":                  "trailing stop hit",
+    "stop_loss":                      "stop-loss hit",
+    "take_profit":                    "take-profit hit",
+    "pnl_watcher":                    "emergency auto-close",
+  };
+  for (const [k, v] of Object.entries(map)) {
+    if (reason.includes(k)) return v;
+  }
+  return reason;
 }
-
-function pnlIcon() { return ""; }
 
 // ── Subscribe: close events only ─────────────────────────────────
 on("close", async (data) => {
   if (!isEnabled()) return;
   const { config } = await import("./config.js");
-  const unit = config.management?.pnlUnit || "sol";
+  const unit   = config.management?.pnlUnit || "sol";
+  const mark   = pnlMark(data.pnlPct);
+  const pnl    = formatPnl(data.pnlSol, data.pnlUsd, data.pnlPct, unit);
+  const strat  = formatStrategy(data.strategy, data.solSplitPct);
+  const held   = formatHeld(data.minutesHeld);
+  const reason = formatReason(data.reason);
+  const pair   = data.pair || "Position";
 
-  const icon     = pnlIcon(data.pnlPct);
-  const pnlLine  = formatPnl(data.pnlSol, data.pnlUsd, data.pnlPct, unit);
-  const stratLine = formatStrategy(data.strategy, data.solSplitPct);
-  const heldLine  = data.minutesHeld != null ? `${data.minutesHeld}m` : null;
-  const reasonLine = formatReason(data.reason);
+  const rows = [
+    [`PnL`,      `${mark}  <b>${pnl}</b>`],
+    strat  ? [`Strategy`, strat]  : null,
+    held   ? [`Held`,     held]   : null,
+    reason ? [`Reason`,   reason] : null,
+  ].filter(Boolean);
 
-  const lines = [
-    `<b>${data.pair || "Position"}</b>  closed`,
-    `PnL: <b>${pnlLine}</b>`,
-  ];
-  if (stratLine) lines.push(`Strategy: ${stratLine}`);
-  if (heldLine)  lines.push(`Held: ${heldLine}`);
-  if (reasonLine) lines.push(`Reason: ${reasonLine}`);
+  const pad = Math.max(...rows.map(r => r[0].length));
+  const body = rows.map(([k, v]) => `  ${k.padEnd(pad)}  ${v}`).join("\n");
 
-  await send(lines.join("\n"));
+  await send(`<b>${pair}</b>  —  closed\n\n${body}`);
 });
 
 on("pnl_watcher_close", async (data) => {
   if (!isEnabled()) return;
   const { config } = await import("./config.js");
-  const unit = config.management?.pnlUnit || "sol";
-  const pnlLine = formatPnl(data.pnlSol, data.pnlUsd, data.pnlPct, unit);
+  const unit   = config.management?.pnlUnit || "sol";
+  const mark   = pnlMark(data.pnlPct);
+  const pnl    = formatPnl(data.pnlSol, data.pnlUsd, data.pnlPct, unit);
+  const reason = data.reason || "PnL watcher triggered";
+  const pair   = data.pair || "Position";
 
-  await send([
-    `<b>${data.pair || "Position"}</b>  emergency close`,
-    `PnL: <b>${pnlLine}</b>`,
-    `Reason: ${data.reason || "PnL watcher triggered"}`,
-  ].join("\n"));
+  const rows = [
+    [`PnL`,    `${mark}  <b>${pnl}</b>`],
+    [`Reason`, reason],
+  ];
+  const pad  = Math.max(...rows.map(r => r[0].length));
+  const body = rows.map(([k, v]) => `  ${k.padEnd(pad)}  ${v}`).join("\n");
+
+  await send(`<b>${pair}</b>  —  emergency close\n\n${body}`);
 });
 
 // ── Init ─────────────────────────────────────────────────────────
