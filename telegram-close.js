@@ -129,12 +129,7 @@ function formatReason(reason) {
     .replace("take_profit", "take-profit hit");
 }
 
-function pnlIcon(pnlPct) {
-  if ((pnlPct ?? 0) > 0.5) return "✅";
-  if ((pnlPct ?? 0) < -5)  return "🔴";
-  if ((pnlPct ?? 0) < 0)   return "🟡";
-  return "⬜";
-}
+function pnlIcon() { return ""; }
 
 // ── Subscribe: close events only ─────────────────────────────────
 on("close", async (data) => {
@@ -149,7 +144,7 @@ on("close", async (data) => {
   const reasonLine = formatReason(data.reason);
 
   const lines = [
-    `${icon} <b>${data.pair || "Position"}</b>  closed`,
+    `<b>${data.pair || "Position"}</b>  closed`,
     `PnL: <b>${pnlLine}</b>`,
   ];
   if (stratLine) lines.push(`Strategy: ${stratLine}`);
@@ -166,7 +161,7 @@ on("pnl_watcher_close", async (data) => {
   const pnlLine = formatPnl(data.pnlSol, data.pnlUsd, data.pnlPct, unit);
 
   await send([
-    `⚡ <b>${data.pair || "Position"}</b>  emergency close`,
+    `<b>${data.pair || "Position"}</b>  emergency close`,
     `PnL: <b>${pnlLine}</b>`,
     `Reason: ${data.reason || "PnL watcher triggered"}`,
   ].join("\n"));
