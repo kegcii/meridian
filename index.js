@@ -10,6 +10,7 @@ import { config, reloadScreeningThresholds, computeDeployAmount } from "./config
 import { evolveThresholds, getPerformanceSummary, deduplicateLessons } from "./lessons.js";
 import { registerCronRestarter } from "./tools/executor.js";
 import { startPolling, stopPolling, sendMessage, isEnabled as telegramEnabled } from "./telegram.js";
+import "./telegram-close.js"; // close-only notifier — uses TELEGRAM_CLOSE_TOKEN (independent from telegram.js)
 import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
