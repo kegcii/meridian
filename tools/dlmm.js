@@ -261,18 +261,18 @@ export async function deployPosition({
     } catch { /* default to false */ }
     if (!hasSmartWallets) failures.push("no smart wallets on pool");
 
-    // Condition 2: Top LPers >= 80% win rate using spot
+    // Condition 2: Top LPers >= 70% win rate using spot
     let studyPasses = false;
     try {
       const studyResult = await studyTopLPers({ pool_address, limit: 4 });
       const credible = (studyResult?.lpers || []).filter(lp => lp.total_lp >= 3 && lp.win_rate >= 0.6 && lp.total_inflow >= 1000);
       const avgWR = credible.length > 0 ? credible.reduce((s, lp) => s + lp.win_rate, 0) / credible.length : 0;
-      studyPasses = avgWR >= 0.80;
+      studyPasses = avgWR >= 0.70;
     } catch { /* default to false */ }
-    if (!studyPasses) failures.push("top LPers < 80% win rate");
+    if (!studyPasses) failures.push("top LPers < 70% win rate");
 
-    // Condition 3: Price must be stabilizing (not pumping >10% in 1h)
-    let priceStable = false;
+    // Condition 3: Momentum check (FLIPPED — pump ENCOURAGES spot, dump BLOCKS it)
+    let momentumOk = true;
     try {
       const { fetchOkxPriceInfo } = await import("../tools/okx.js");
       const resolvedMint = base_mint || (await (async () => {
@@ -280,22 +280,37 @@ export async function deployPosition({
         return pool.lbPair.tokenXMint.toBase58();
       })());
       const okx = await fetchOkxPriceInfo(resolvedMint);
-      priceStable = okx && Math.abs(okx.change_1h || 0) <= 10;
-    } catch { priceStable = true; /* if OKX unavailable, don't block on this alone */ }
-    if (!priceStable) failures.push("price pumping >10% in 1h");
+      if (okx) {
+        const change1h = okx.change_1h || 0;
+        if (change1h < -25) {
+          // Rug/panic sell level — block spot
+          momentumOk = false;
+        } else if (change1h > 5) {
+          // Pumping — spot is ideal here, log encouragement
+          log("deploy", `Momentum UP (+${change1h.toFixed(1)}% 1h) — two-sided spot encouraged`);
+        }
+      }
+    } catch { momentumOk = true; /* if OKX unavailable, don't block */ }
+    if (!momentumOk) failures.push("price dumping >25% in 1h — rug/panic, too risky for spot");
 
-    // Condition 4: Pool memory shows prior spot profits
-    let memoryPasses = false;
+    // Condition 4: Pool memory — only block if NEGATIVE spot history exists
+    // No history = pass (allow agent to explore new pools)
+    let memoryPasses = true;
     try {
       const { getPoolMemory } = await import("../pool-memory.js");
       const mem = getPoolMemory(pool_address);
       if (mem && mem.deploys?.length > 0) {
         const spotDeploys = mem.deploys.filter(d => d.strategy === "spot");
-        const spotWins = spotDeploys.filter(d => (d.pnl_pct || 0) > 0);
-        memoryPasses = spotDeploys.length > 0 && spotWins.length / spotDeploys.length > 0.5;
+        if (spotDeploys.length >= 3) {
+          // Only block if 3+ spot deploys AND win rate < 35% (clear loser)
+          const spotWins = spotDeploys.filter(d => (d.pnl_pct || 0) > 0);
+          memoryPasses = spotWins.length / spotDeploys.length >= 0.35;
+        }
+        // < 3 spot deploys or no spot deploys → pass (not enough data to judge)
       }
-    } catch { /* default to false */ }
-    if (!memoryPasses) failures.push("no prior profitable spot deploys in pool memory");
+      // No memory at all → pass (new pool, give it a chance)
+    } catch { /* default to true */ }
+    if (!memoryPasses) failures.push("pool has negative spot history (WR < 35% across 3+ deploys)");
 
     if (failures.length > 0) {
       log("deploy", `BLOCKED two-sided spot: ${failures.join(", ")}`);
@@ -304,7 +319,7 @@ export async function deployPosition({
         error: `Two-sided spot blocked — failed ${failures.length}/4 hard conditions: ${failures.join("; ")}. Use bid_ask instead.`,
       };
     }
-    log("deploy", `Two-sided spot approved: all 4 conditions met (smart wallets, study WR >= 80%, price stable, pool memory positive)`);
+    log("deploy", `Two-sided spot approved: all 4 conditions met (smart wallets, study WR >= 70%, momentum ok, pool memory ok)`);
   }
 
   // ─── Hard guard: no duplicate pool/token deployments ────────────
@@ -1505,6 +1520,14 @@ export async function closePosition({ position_address, _pnlOverride = null }) {
         log("close", `initial_value_usd missing for ${position_address}, using finalValueUsd ($${finalValueUsd}) as fallback`);
       }
 
+      // Fetch live pool data for close-time price change
+      let closePriceChangePct = null;
+      try {
+        const { getPoolDetail } = await import("./screening.js");
+        const livePool = _livePoolCache.get(poolAddress)?.pool || await getPoolDetail({ pool_address: poolAddress, timeframe: config.screening.timeframe || "5m" }).catch(() => null);
+        closePriceChangePct = livePool?.price_change_pct ?? null;
+      } catch { /* best-effort */ }
+
       await recordPerformance({
         position: position_address,
         pool: poolAddress,
@@ -1528,6 +1551,8 @@ export async function closePosition({ position_address, _pnlOverride = null }) {
         close_reason: closeReason,
         deployed_at: tracked.deployed_at,
         signal_snapshot: tracked.signal_snapshot || null,
+        deploy_price_change_pct: tracked.deploy_price_change_pct ?? null,
+        close_price_change_pct: closePriceChangePct,
       });
 
       // Clean up transient nugget entries

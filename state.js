@@ -30,11 +30,7 @@ function load() {
 function save(state) {
   try {
     state.lastUpdated = new Date().toISOString();
-    // Atomic write: write to temp file then rename — prevents corruption
-    // if pnl-watcher and management cycle write simultaneously
-    const tmp = STATE_FILE + ".tmp";
-    fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
-    fs.renameSync(tmp, STATE_FILE);
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   } catch (err) {
     log("state_error", `Failed to write state.json: ${err.message}`);
   }
@@ -70,6 +66,7 @@ export function trackPosition({
   signal_snapshot = null,
   deploy_timeframe = null,
   deploy_categories = null,
+  deploy_price_change_pct = null,
 }) {
   const state = load();
   state.positions[position] = {
@@ -96,6 +93,7 @@ export function trackPosition({
     signal_snapshot: signal_snapshot || null,
     deploy_timeframe: deploy_timeframe || null,
     deploy_categories: deploy_categories || null,
+    deploy_price_change_pct: deploy_price_change_pct ?? null,
     out_of_range_since: null,
     last_claim_at: null,
     total_fees_claimed_usd: 0,
@@ -378,7 +376,7 @@ export async function syncOpenPositions(active_addresses) {
   try {
     const { fetchHistoricalPositionMap } = await import("./tools/lp-overview.js");
     lpAgentMap = await fetchHistoricalPositionMap();
-  } catch (e) { log("state", `LP Agent history fetch unavailable: ${e.message}`); }
+  } catch { /* LP Agent unavailable */ }
 
   // Lazy import of recordPerformance (only needed if we have closed positions)
   let recordPerformance = null;

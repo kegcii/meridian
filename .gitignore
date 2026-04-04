@@ -40,3 +40,5 @@ context.md
 *.latest
 *.main-github
 *.tmp
+*.api-meteora
+

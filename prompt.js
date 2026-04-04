@@ -195,14 +195,15 @@ STRATEGY SELECTION — MOMENTUM-BASED:
 
    B. SIDEWAYS / COOLING (use BID_ASK):
       Deploy bid_ask when:
-      - change_1h is flat (-3% to +3%)
+      - change_1h is flat or mildly negative (-15% to +3%)
       - Volume declining or stable, no momentum signal
-      - Token has been ranging for hours
+      - Token has been ranging or pulling back normally
       Bid_ask is safe here — you earn fees when price dips into your range.
+      Normal Solana dips (-5% to -15%) are NOT dumps — still deploy bid_ask.
 
    C. MOMENTUM DOWN (SKIP):
       Do NOT deploy when:
-      - change_1h < -5% (active dump)
+      - change_1h < -20% (rug/panic dump)
       - Volume spike with price dropping (panic selling)
       - Narrative is dead, organic declining
       Wait for stabilization.
