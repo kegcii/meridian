@@ -686,7 +686,7 @@ export default function QuickActions({
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) handleClose(); }}>
-        <DialogContent className="flex max-h-[80vh] max-w-2xl flex-col gap-0 p-0">
+        <DialogContent className="flex max-h-[85vh] w-[calc(100%-1rem)] sm:w-full max-w-2xl flex-col gap-0 p-0">
           <DialogHeader className="flex flex-row items-center justify-between border-b border-white/8 px-5 py-4">
             <DialogTitle>{activeAction ? ACTION_TITLES[activeAction] : ""}</DialogTitle>
             <DialogClose className="rounded-lg p-1.5 text-ash/60 transition-colors hover:bg-white/8 hover:text-cream">

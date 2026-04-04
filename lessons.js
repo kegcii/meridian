@@ -1129,6 +1129,38 @@ export function getPerformanceSummary() {
     };
   }
 
+  // ── Daily breakdown ──
+  const daily = {};
+  for (const entry of p) {
+    const day = (entry.recorded_at || "").slice(0, 10); // "YYYY-MM-DD"
+    if (!day) continue;
+    if (!daily[day]) daily[day] = { trades: 0, wins: 0, pnl_usd: 0 };
+    daily[day].trades++;
+    if (entry.pnl_usd > 0) daily[day].wins++;
+    daily[day].pnl_usd += entry.pnl_usd;
+  }
+  for (const d of Object.values(daily)) {
+    d.pnl_usd = Math.round(d.pnl_usd * 100) / 100;
+    d.win_rate_pct = d.trades > 0 ? Math.round((d.wins / d.trades) * 100) : 0;
+  }
+
+  // ── Timeframe PnL (1d, 7d, 30d) ──
+  const now = Date.now();
+  const timeframes = {};
+  for (const [label, ms] of [["1d", 86400000], ["7d", 604800000], ["30d", 2592000000]]) {
+    const cutoff = new Date(now - ms).toISOString();
+    const subset = p.filter((x) => (x.recorded_at || "") >= cutoff);
+    const tWins = subset.filter((x) => x.pnl_usd > 0).length;
+    const tPnl = subset.reduce((s, x) => s + x.pnl_usd, 0);
+    timeframes[label] = {
+      trades: subset.length,
+      wins: tWins,
+      losses: subset.length - tWins,
+      pnl_usd: Math.round(tPnl * 100) / 100,
+      win_rate_pct: subset.length > 0 ? Math.round((tWins / subset.length) * 100) : 0,
+    };
+  }
+
   return {
     total_positions_closed: p.length,
     total_pnl_usd: Math.round(totalPnl * 100) / 100,
@@ -1137,5 +1169,7 @@ export function getPerformanceSummary() {
     win_rate_pct: Math.round((wins / p.length) * 100),
     total_lessons: data.lessons.length,
     by_strategy,
+    daily,
+    timeframes,
   };
 }

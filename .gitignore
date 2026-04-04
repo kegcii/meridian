@@ -21,6 +21,7 @@ launchpad-blacklist.json
 signal-weights.json
 token-blacklist.json
 deployer-blacklist.json
+activity.json
 
 # Logs
 logs/
@@ -36,6 +37,7 @@ web/dist/
 context.md
 *.bak
 *.bak1
+*.bak2
 *.save
 *.latest
 *.main-github

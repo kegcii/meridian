@@ -97,9 +97,33 @@ function PositionCardInner({ position, onCommand }: { position: PositionInfo; on
           <span className="block text-[10px] text-ash">Fees</span>
           <span className="font-mono text-[11px] text-cream">{fees}</span>
         </div>
-        <div className="ml-auto">
+        <div>
           <span className="block text-[10px] text-ash">Age</span>
           <span className="font-mono text-[11px] text-steel">{age_minutes != null ? formatAge(age_minutes) : "--"}</span>
+        </div>
+        <div>
+          <span className="block text-[10px] text-ash">Strategy</span>
+          <span className="font-mono text-[11px] text-cream">{position.strategy ?? "--"}</span>
+        </div>
+      </div>
+
+      {/* Extra metrics */}
+      <div className="mb-2 flex flex-wrap items-center gap-3 border-t border-white/6 pt-2">
+        <div>
+          <span className="block text-[10px] text-ash">Bin step</span>
+          <span className="font-mono text-[11px] text-cream">{position.bin_step ?? "--"}</span>
+        </div>
+        <div>
+          <span className="block text-[10px] text-ash">Fee %</span>
+          <span className="font-mono text-[11px] text-cream">{position.bin_step ? `${(position.bin_step / 100).toFixed(2)}%` : "--"}</span>
+        </div>
+        <div>
+          <span className="block text-[10px] text-ash">Volatility</span>
+          <span className="font-mono text-[11px] text-cream">{position.volatility != null ? position.volatility.toFixed(2) : "--"}</span>
+        </div>
+        <div>
+          <span className="block text-[10px] text-ash">Fee/TVL</span>
+          <span className="font-mono text-[11px] text-cream">{position.fee_tvl_ratio != null ? `${position.fee_tvl_ratio.toFixed(2)}%` : "--"}</span>
         </div>
       </div>
 

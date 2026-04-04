@@ -388,6 +388,7 @@ export function startServer(timersFn) {
       candidates: candidateResult.status === "fulfilled" ? normalizeCandidatesPayload(candidateResult.value) : null,
       lpOverview: lpOverviewResult.status === "fulfilled" ? lpOverviewResult.value : null,
       strategyBreakdown: (() => { try { const s = getPerformanceSummary(); return s?.by_strategy ?? null; } catch { return null; } })(),
+      performanceExtra: (() => { try { const s = getPerformanceSummary(); return s ? { daily: s.daily, timeframes: s.timeframes } : null; } catch { return null; } })(),
       activity: _activityBuffer.slice(-50),
     });
 

@@ -88,7 +88,7 @@ function BinRangeChartInner({ lowerBin, upperBin, activeBin, inRange, strategy =
   const hoveredBar = hoveredIndex != null ? bars[hoveredIndex] : null;
   const readout = hoveredBar
     ? `Bins ${hoveredBar.startBin}-${hoveredBar.endBin} · ${hoveredBar.side === "active" ? "active bin" : hoveredBar.side === "sol" ? "SOL side" : hoveredBar.side === "token" ? "token side" : "out of range"}`
-    : `Range ${lowerBin}-${upperBin} · ${strategy === "bid_ask" ? "bid-ask profile" : "spot profile"}`;
+    : `Range ${lowerBin} to ${upperBin} (${upperBin - lowerBin} bins) · ${strategy === "bid_ask" ? "bid-ask profile" : "spot profile"}`;
 
   return (
     <div>

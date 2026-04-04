@@ -40,6 +40,11 @@ export interface PositionInfo {
   unclaimed_fees_sol?: number;
   unclaimed_fees_usd?: number;
   age_minutes?: number;
+  bin_step?: number | null;
+  volatility?: number | null;
+  fee_tvl_ratio?: number | null;
+  total_value_sol?: number | null;
+  total_value_usd?: number | null;
 }
 
 export interface PositionData {
@@ -125,6 +130,7 @@ export function useWebSocket() {
   const [candidates, setCandidates] = useState<CandidateData | null>(null);
   const [lpOverview, setLpOverview] = useState<LpOverviewData | null>(null);
   const [strategyBreakdown, setStrategyBreakdown] = useState<Record<string, { trades?: number; wins?: number; losses?: number; win_rate_pct?: number; total_pnl_usd?: number; avg_pnl_pct?: number; avg_range_efficiency_pct?: number; avg_hold_min?: number }> | null>(null);
+  const [performanceExtra, setPerformanceExtra] = useState<{ daily?: Record<string, { trades: number; wins: number; pnl_usd: number; win_rate_pct: number }>; timeframes?: Record<string, { trades: number; wins: number; losses: number; pnl_usd: number; win_rate_pct: number }> } | null>(null);
   const [quickActionResult, setQuickActionResult] = useState<QuickActionResult | null>(null);
 
   const connect = useCallback(() => {
@@ -160,6 +166,7 @@ export function useWebSocket() {
             if (isCandidateData(msg.candidates)) setCandidates(msg.candidates);
             if (msg.lpOverview) setLpOverview(msg.lpOverview);
             if (msg.strategyBreakdown) setStrategyBreakdown(msg.strategyBreakdown);
+            if (msg.performanceExtra) setPerformanceExtra(msg.performanceExtra);
             if (Array.isArray(msg.activity) && msg.activity.length > 0) {
               setNotifications((prev) => {
                 const existingIds = new Set(prev.map((n) => n.id));
@@ -244,5 +251,5 @@ export function useWebSocket() {
     setQuickActionResult(null);
   }, []);
 
-  return { connected, messages, notifications, status, timers, positions, wallet, candidates, lpOverview, strategyBreakdown, sendMessage, sendQuickAction, quickActionResult, clearQuickActionResult };
+  return { connected, messages, notifications, status, timers, positions, wallet, candidates, lpOverview, strategyBreakdown, performanceExtra, sendMessage, sendQuickAction, quickActionResult, clearQuickActionResult };
 }

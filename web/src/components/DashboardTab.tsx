@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { PositionData, WalletData, LpOverviewData, QuickActionResult } from "../hooks/useWebSocket";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,22 +12,49 @@ type StrategyStats = {
   total_pnl_usd?: number; avg_pnl_pct?: number; avg_range_efficiency_pct?: number; avg_hold_min?: number;
 };
 
+type DailyEntry = { trades: number; wins: number; pnl_usd: number; win_rate_pct: number };
+type TimeframeEntry = { trades: number; wins: number; losses: number; pnl_usd: number; win_rate_pct: number };
+
 interface DashboardTabProps {
   positions: PositionData | null;
   wallet: WalletData | null;
   lpOverview: LpOverviewData | null;
   strategyBreakdown: Record<string, StrategyStats> | null;
+  performanceExtra: { daily?: Record<string, DailyEntry>; timeframes?: Record<string, TimeframeEntry> } | null;
   sendQuickAction: (action: string) => void;
   quickActionResult: QuickActionResult | null;
   clearQuickActionResult: () => void;
   onCommand?: (text: string) => void;
 }
 
-export default function DashboardTab({ positions, wallet, lpOverview, strategyBreakdown, sendQuickAction, quickActionResult, clearQuickActionResult, onCommand }: DashboardTabProps) {
+export default function DashboardTab({ positions, wallet, lpOverview, strategyBreakdown, performanceExtra, sendQuickAction, quickActionResult, clearQuickActionResult, onCommand }: DashboardTabProps) {
+  const [pnlTimeframe, setPnlTimeframe] = useState<"1d" | "7d" | "30d" | "all">("all");
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+
   const oorCount = useMemo(
     () => positions?.positions.filter((p) => !p.in_range).length ?? 0,
     [positions],
   );
+
+  const inPositionsSol = useMemo(
+    () => positions?.positions.reduce((s, p) => s + (p.total_value_sol ?? 0), 0) ?? 0,
+    [positions],
+  );
+
+  const pnlForTimeframe = useMemo(() => {
+    if (pnlTimeframe === "all") return lpOverview ? { pnl: lpOverview.total_pnl_sol, trades: lpOverview.closed_positions, wr: lpOverview.win_rate_pct } : null;
+    const tf = performanceExtra?.timeframes?.[pnlTimeframe];
+    if (!tf) return null;
+    return { pnl: tf.pnl_usd, trades: tf.trades, wr: tf.win_rate_pct };
+  }, [pnlTimeframe, performanceExtra, lpOverview]);
+
+  const dailyData = performanceExtra?.daily?.[selectedDate] ?? null;
+
+  const shiftDate = (dir: number) => {
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() + dir);
+    setSelectedDate(d.toISOString().slice(0, 10));
+  };
 
   return (
     <ScrollArea className="h-full">
@@ -37,19 +64,15 @@ export default function DashboardTab({ positions, wallet, lpOverview, strategyBr
           <div className="absolute -left-10 top-10 h-36 w-36 rounded-full bg-[radial-gradient(circle,rgba(255,209,102,0.16),transparent_72%)]" />
           <div className="absolute right-0 top-0 h-full w-1/3 bg-[linear-gradient(135deg,rgba(255,209,102,0.08),transparent_56%)]" />
           <CardContent className="p-4">
-            <div className="flex min-h-[220px] flex-col justify-between rounded-[24px] border border-amber-200/12 bg-[linear-gradient(180deg,rgba(255,209,102,0.1),rgba(255,209,102,0.02))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+            <div className="flex flex-col gap-4 rounded-[24px] border border-amber-200/12 bg-[linear-gradient(180deg,rgba(255,209,102,0.1),rgba(255,209,102,0.02))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+              {/* Header */}
               <div className="flex items-start justify-between gap-3">
                 <div className="flex flex-col gap-2">
                   <span className="font-mono text-[10px] uppercase tracking-[0.24em] text-amber-200/72">
                     Portfolio Pulse
                   </span>
-                  <div className="max-w-sm">
-                    <div className="text-3xl font-semibold leading-none tracking-tight text-cream sm:text-4xl">
-                      {wallet ? `${wallet.sol.toFixed(2)} SOL` : <Skeleton className="h-10 w-36" />}
-                    </div>
-                    <div className="mt-2 text-sm text-cream/74">
-                      {wallet ? `$${wallet.sol_usd.toFixed(0)} on hand with live DLMM capital ready to move.` : "Awaiting wallet state"}
-                    </div>
+                  <div className="text-3xl font-semibold leading-none tracking-tight text-cream sm:text-4xl">
+                    {wallet ? `${(wallet.sol + inPositionsSol).toFixed(2)} SOL` : <Skeleton className="h-10 w-36" />}
                   </div>
                 </div>
                 <Badge variant={oorCount > 0 ? "destructive" : "secondary"}>
@@ -57,28 +80,78 @@ export default function DashboardTab({ positions, wallet, lpOverview, strategyBr
                 </Badge>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+              {/* Wallet / In Positions / Total breakdown */}
+              <div className="grid grid-cols-3 gap-3 border-t border-white/8 pt-3">
                 <div>
-                  <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ash/58">Desk Read</div>
-                  <div className="mt-2 max-w-md text-sm text-cream/80">
-                    {lpOverview
-                      ? `Closed ${lpOverview.closed_positions} positions with ${lpOverview.win_rate_pct.toFixed(1)}% wins and ${lpOverview.total_fees_sol.toFixed(3)} SOL captured in fees.`
-                      : "Waiting for realized performance data before publishing the desk read."}
+                  <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-ash/56">Wallet</div>
+                  <div className="mt-1 font-mono text-sm text-cream">{wallet ? wallet.sol.toFixed(2) : "--"}</div>
+                </div>
+                <div>
+                  <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-ash/56">In positions</div>
+                  <div className="mt-1 font-mono text-sm text-cream">{inPositionsSol.toFixed(2)}</div>
+                </div>
+                <div>
+                  <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-ash/56">Total</div>
+                  <div className="mt-1 font-mono text-sm text-cream">{wallet ? (wallet.sol + inPositionsSol).toFixed(2) : "--"} SOL</div>
+                  <div className="font-mono text-[9px] text-ash/44">{wallet ? `$${(wallet.sol_usd + inPositionsSol * wallet.sol_price).toFixed(0)}` : ""}</div>
+                </div>
+              </div>
+
+              {/* PnL with timeframe selector */}
+              <div className="border-t border-white/8 pt-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-ash/56">Net PnL</div>
+                  <div className="flex gap-1">
+                    {(["1d", "7d", "30d", "all"] as const).map((tf) => (
+                      <button
+                        key={tf}
+                        onClick={() => setPnlTimeframe(tf)}
+                        className={`font-mono text-[10px] px-2 py-0.5 rounded-md transition-colors ${pnlTimeframe === tf ? "bg-white/10 text-cream border border-white/15" : "text-ash/50 hover:text-cream"}`}
+                      >
+                        {tf.toUpperCase()}
+                      </button>
+                    ))}
                   </div>
                 </div>
-                {lpOverview ? (
-                  <div className="text-right">
-                    <div className={`font-mono text-3xl ${lpOverview.total_pnl_sol < 0 ? "text-red-400" : "text-emerald-300"}`}>
-                      {lpOverview.total_pnl_sol >= 0 ? "+" : ""}{lpOverview.total_pnl_sol.toFixed(3)}
-                    </div>
-                    <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-ash/56">SOL net pnl</div>
+                {pnlForTimeframe ? (
+                  <div className="flex items-baseline gap-3">
+                    <span className={`font-mono text-2xl ${pnlForTimeframe.pnl >= 0 ? "text-emerald-300" : "text-red-400"}`}>
+                      {pnlForTimeframe.pnl >= 0 ? "+" : ""}{pnlTimeframe === "all" ? pnlForTimeframe.pnl.toFixed(3) : `$${pnlForTimeframe.pnl.toFixed(2)}`}
+                    </span>
+                    <span className="font-mono text-[10px] text-ash/50">{pnlTimeframe === "all" ? "SOL" : "USD"}</span>
+                    <span className="font-mono text-[10px] text-ash/44">{pnlForTimeframe.trades} trades · {pnlForTimeframe.wr.toFixed(0)}% WR</span>
                   </div>
                 ) : (
-                  <div className="flex flex-col items-end gap-2">
-                    <Skeleton className="h-9 w-24" />
-                    <Skeleton className="h-3 w-18" />
-                  </div>
+                  <Skeleton className="h-8 w-32" />
                 )}
+              </div>
+
+              {/* Daily PnL calendar */}
+              <div className="border-t border-white/8 pt-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-ash/56">Daily PnL</div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => shiftDate(-1)} className="text-ash/50 hover:text-cream text-sm px-1">◀</button>
+                    <span className="font-mono text-[11px] text-cream/80 border border-white/10 rounded-md px-2 py-0.5">{selectedDate}</span>
+                    <button onClick={() => shiftDate(1)} className="text-ash/50 hover:text-cream text-sm px-1">▶</button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="rounded-xl border border-white/8 bg-white/4 px-3 py-2 text-center">
+                    <div className="font-mono text-[9px] uppercase text-ash/50">Trades</div>
+                    <div className="font-mono text-sm text-cream mt-1">{dailyData?.trades ?? 0}</div>
+                  </div>
+                  <div className="rounded-xl border border-white/8 bg-white/4 px-3 py-2 text-center">
+                    <div className="font-mono text-[9px] uppercase text-ash/50">PnL</div>
+                    <div className={`font-mono text-sm mt-1 ${(dailyData?.pnl_usd ?? 0) >= 0 ? "text-emerald-300" : "text-red-400"}`}>
+                      {dailyData ? `$${dailyData.pnl_usd.toFixed(2)}` : "$0.00"}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-white/8 bg-white/4 px-3 py-2 text-center">
+                    <div className="font-mono text-[9px] uppercase text-ash/50">WR</div>
+                    <div className="font-mono text-sm text-cream mt-1">{dailyData?.win_rate_pct ?? 0}%</div>
+                  </div>
+                </div>
               </div>
             </div>
 
