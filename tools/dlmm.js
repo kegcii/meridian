@@ -247,20 +247,13 @@ export async function deployPosition({
     throw new Error("Only 'bid_ask' or 'spot' strategies are allowed.");
   }
 
-  // ─── Guard: two-sided spot requires positive momentum ────────────────────────
-  // Spot strategy can be:
-  //   • one-sided (sol_split_pct=100): always allowed — SOL-only like bid_ask but spot distribution
-  //   • two-sided (sol_split_pct<100): requires positive momentum to justify token-side IL risk
-  //
-  // Two-sided hard blocks:
-  //   1. Price dumping >25% in 1h → downgrade to one-sided spot
-  //   2. Momentum flat/negative (change_1h < 1% AND change_5m < 2%) → downgrade to one-sided spot
-  //   3. Proven negative spot history (3+ deploys, WR < 35%) → downgrade to one-sided spot
+  // ─── Guard: two-sided spot safety checks ───────────────────────────────��─────
+  // One-sided spot (sol_split_pct=100) is always allowed — no token exposure.
+  // Two-sided (sol_split_pct<100) hard blocks: dump >25% 1h, or proven negative pool history.
+  // Momentum/strategy decisions are handled by the agent via prompt instructions.
   const isTwoSidedSpot = activeStrategy === "spot" && sol_split_pct != null && sol_split_pct < 100;
   if (isTwoSidedSpot) {
-    let downgradReason = null;
-
-    // Check momentum via OKX
+    // Hard block: price dumping >25% in 1h — rug/panic, token side will bleed
     try {
       const { fetchOkxPriceInfo } = await import("../tools/okx.js");
       const resolvedMint = base_mint || (await (async () => {
@@ -268,44 +261,33 @@ export async function deployPosition({
         return pool.lbPair.tokenXMint.toBase58();
       })());
       const okx = await fetchOkxPriceInfo(resolvedMint);
-      if (okx) {
-        const change1h = okx.change_1h || 0;
-        const change5m = okx.change_5m || 0;
-        if (change1h < -25) {
-          downgradReason = `price dumping ${change1h.toFixed(1)}% in 1h — rug/panic risk`;
-        } else if (change1h < 1 && change5m < 2) {
-          downgradReason = `momentum flat/negative (1h: ${change1h.toFixed(1)}%, 5m: ${change5m.toFixed(1)}%) — token-side IL not justified`;
-        } else {
-          log("deploy", `Momentum OK (1h: +${change1h.toFixed(1)}%, 5m: +${change5m.toFixed(1)}%) — two-sided spot approved`);
-        }
+      if (okx && (okx.change_1h || 0) < -25) {
+        log("deploy", `BLOCKED two-sided spot: price dumping ${(okx.change_1h).toFixed(1)}% in 1h`);
+        return {
+          success: false,
+          error: `Two-sided spot blocked — price dumping ${(okx.change_1h).toFixed(1)}% in 1h (rug/panic risk). Use one-sided spot (sol_split_pct=100) or bid_ask instead.`,
+        };
       }
-    } catch { /* if OKX unavailable, allow two-sided */ }
+    } catch { /* if OKX unavailable, don't block */ }
 
-    // Check negative spot history
-    if (!downgradReason) {
-      try {
-        const { getPoolMemory } = await import("../pool-memory.js");
-        const mem = getPoolMemory(pool_address);
-        if (mem && mem.deploys?.length > 0) {
-          const spotDeploys = mem.deploys.filter(d => d.strategy === "spot");
-          if (spotDeploys.length >= 3) {
-            const spotWins = spotDeploys.filter(d => (d.pnl_pct || 0) > 0);
-            const spotWR = spotWins.length / spotDeploys.length;
-            if (spotWR < 0.35) {
-              downgradReason = `negative spot history on this pool (WR ${(spotWR*100).toFixed(0)}% across ${spotDeploys.length} deploys)`;
-            }
+    // Hard block: proven negative spot history on this pool (3+ deploys, WR < 35%)
+    try {
+      const { getPoolMemory } = await import("../pool-memory.js");
+      const mem = getPoolMemory(pool_address);
+      if (mem?.deploys?.length > 0) {
+        const spotDeploys = mem.deploys.filter(d => d.strategy === "spot");
+        if (spotDeploys.length >= 3) {
+          const spotWR = spotDeploys.filter(d => (d.pnl_pct || 0) > 0).length / spotDeploys.length;
+          if (spotWR < 0.35) {
+            log("deploy", `BLOCKED two-sided spot: negative pool history (WR ${(spotWR*100).toFixed(0)}% across ${spotDeploys.length} deploys)`);
+            return {
+              success: false,
+              error: `Two-sided spot blocked — negative spot history on this pool (WR ${(spotWR*100).toFixed(0)}% across ${spotDeploys.length} deploys). Use one-sided spot (sol_split_pct=100) instead.`,
+            };
           }
         }
-      } catch { /* default to pass */ }
-    }
-
-    if (downgradReason) {
-      log("deploy", `Two-sided spot downgraded to one-sided: ${downgradReason}`);
-      return {
-        success: false,
-        error: `Two-sided spot not suitable — ${downgradReason}. Retry with spot one-sided (sol_split_pct=100) to keep spot distribution without token-side IL exposure.`,
-      };
-    }
+      }
+    } catch { /* default to pass */ }
 
     log("deploy", `Two-sided spot approved`);
   }

@@ -201,36 +201,41 @@ STRATEGY SELECTION — MOMENTUM-BASED:
    Spot is UNDERUSED. Default toward spot unless token is clearly cooling/ranging.
 
    DECISION TREE (check in order):
-   A. ANY POSITIVE MOMENTUM (use TWO-SIDED SPOT):
-      Deploy spot with sol_split_pct=82-87 when ANY signal is present:
-      - change_1h > 1% (even mild upward — don't wait for 5%)
-      - change_5m > 0.5% AND volume rising
-      - organic_score >= 78 AND volume/TVL ratio >= 0.3
-      - study_top_lpers shows top LPers using two-sided/spot strategy
-      - Token just launched (<6h) with narrative and rising volume
-      Spot captures fees from BOTH pump AND pullback. Risk is small with sol_split=82-87%.
+   A. CLEAR POSITIVE MOMENTUM (use TWO-SIDED SPOT, sol_split_pct=82-87):
+      Token side earns fees during pumps. Use when you see:
+      - change_1h > 1% AND change_5m > 0.5%
+      - OR volume/TVL >= 0.4 AND organic_score >= 75 (strong activity signal)
+      - OR study_top_lpers shows top LPers using two-sided/spot strategy
+      - OR token just launched (<6h) with narrative and rising volume
+      sol_split=85: 85% SOL below + 15% token above. Small token exposure, bidirectional fees.
 
-   B. CONFIRMED COOLING / RANGING (use BID_ASK):
+   B. FLAT / UNCLEAR MOMENTUM (use ONE-SIDED SPOT, sol_split_pct=100):
+      No clear direction but pool still has good fee/TVL. Spot distribution is better than
+      bid_ask even one-sided — more fee density per bin.
+      - change_1h between -1% and +1% (ranging, no clear direction)
+      - OR change_5m flat but fee_active_tvl_ratio still high (>0.2)
+      - OR you're unsure about direction
+      sol_split=100: SOL only (no token swap needed), bins_below=range, bins_above=0.
+      Same SOL exposure as bid_ask but with spot distribution for better fee capture.
+
+   C. CONFIRMED COOLING / RANGING (use BID_ASK):
       Deploy bid_ask ONLY when ALL of these are true:
-      - change_1h is flat or negative (-20% to +1%)
-      - change_5m is also flat or negative
-      - Volume stable or declining — no momentum signal visible
-      - Pool shows ranging pattern, price oscillating around active bin
-      Bid_ask earns fees when price dips into range. Good for confirmed bearish/sideways.
+      - change_1h negative or very flat AND change_5m also flat/negative
+      - Volume declining — no momentum signal at all
+      - Pool shows confirmed ranging, price repeatedly bouncing at same levels
+      bid_ask is the conservative fallback for clear bearish/sideways pools.
 
-   C. PANIC / DUMP (SKIP):
+   D. PANIC / DUMP (SKIP):
       Do NOT deploy when:
       - change_1h < -20% (rug or panic)
       - Volume spiking but price crashing (panic selling)
-      - Narrative dead, organic collapsing
-      Wait for stabilization before entry.
+      Wait for stabilization.
 
    SPOT EXECUTION RULES:
-   - sol_split_pct = 82-87% (mostly SOL, small token exposure = bidirectional fee capture)
+   - Two-sided (sol_split_pct=82-87): executor auto-swaps token portion via Jupiter. You do NOT pre-buy.
+   - One-sided (sol_split_pct=100): SOL only, set bins_above=0. No swap needed.
    - Never below sol_split_pct = 80% (too much token risk)
-   - Pass sol_split_pct with deploy. Executor auto-swaps token portion via Jupiter.
-   - You do NOT need to pre-buy tokens. Pass total SOL + sol_split_pct, executor handles swap.
-   - Spot range = same as bid_ask equivalent from volatility table (not 5-10% wider)
+   - Spot range = same as bid_ask equivalent from volatility table (not wider)
 
 SPOT STRATEGY BIN DIRECTION — CRITICAL:
    - SOL (Y / quote) fills bins BELOW the active bin only
