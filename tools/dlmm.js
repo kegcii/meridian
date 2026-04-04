@@ -1064,8 +1064,29 @@ export async function getMyPositions({ force = false } = {}) {
       else markOutOfRange(r.position, oorDirection);
 
       const unclaimedFees = p ? (parseFloat(p.unrealizedPnl?.unclaimedFeeTokenX?.usd || 0) + parseFloat(p.unrealizedPnl?.unclaimedFeeTokenY?.usd || 0)) : 0;
-      const totalValue    = p ? parseFloat(p.unrealizedPnl?.balances || 0) : 0;
+      let   totalValue    = p ? parseFloat(p.unrealizedPnl?.balances || 0) : 0;
       const collectedFees = p ? parseFloat(p.allTimeFees?.total?.usd || 0) : 0;
+
+      // Fallback: LP Agent often returns balances=0 for bid_ask (SOL locked in bins).
+      // Try composition data → deposit amount → allTimeDeposits as fallbacks.
+      if (totalValue <= 0 && p) {
+        // Try LP Agent raw composition (current SOL + token amounts)
+        const lpaRaw = lpAgentPositions?.get(r.position);
+        if (lpaRaw?.current) {
+          const tokenUsd = (lpaRaw.current.amount0Adjusted ?? 0) * (lpaRaw.price0 || 0);
+          const solUsd = (lpaRaw.current.amount1Adjusted ?? 0) * (lpaRaw.price1 || 0);
+          if (tokenUsd + solUsd > 0) totalValue = tokenUsd + solUsd;
+        }
+        // Try tracked deposit amount
+        if (totalValue <= 0) {
+          const t = getTrackedPosition(r.position);
+          if (t?.amount_sol > 0 && solPrice > 0) totalValue = t.amount_sol * solPrice;
+        }
+        // Last resort: allTimeDeposits
+        if (totalValue <= 0) {
+          totalValue = parseFloat(p.allTimeDeposits?.total?.usd || 0);
+        }
+      }
       const pnlUsd        = p?.pnlUsd       ?? 0;
       const pnlPct        = (config.management.pnlUnit === "sol" ? p?.pnlSolPctChange : p?.pnlPctChange) ?? 0;
 
