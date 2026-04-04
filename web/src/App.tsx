@@ -9,7 +9,7 @@ import KnowledgeGraph from "./components/KnowledgeGraph";
 import ToastProvider from "./components/ToastProvider";
 
 export default function App() {
-  const { connected, messages, notifications, status, timers, positions, wallet, candidates, lpOverview, sendMessage, sendQuickAction, quickActionResult, clearQuickActionResult } = useWebSocket();
+  const { connected, messages, notifications, status, timers, positions, wallet, candidates, lpOverview, strategyBreakdown, sendMessage, sendQuickAction, quickActionResult, clearQuickActionResult } = useWebSocket();
   const [cmdOpen, setCmdOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
 
@@ -57,6 +57,7 @@ export default function App() {
             notifications={notifications}
             status={status}
             lpOverview={lpOverview}
+            strategyBreakdown={strategyBreakdown}
             onCommand={sendMessage}
             sendQuickAction={sendQuickAction}
             quickActionResult={quickActionResult}

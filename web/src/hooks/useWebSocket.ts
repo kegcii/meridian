@@ -124,6 +124,7 @@ export function useWebSocket() {
   const [wallet, setWallet] = useState<WalletData | null>(null);
   const [candidates, setCandidates] = useState<CandidateData | null>(null);
   const [lpOverview, setLpOverview] = useState<LpOverviewData | null>(null);
+  const [strategyBreakdown, setStrategyBreakdown] = useState<Record<string, { trades?: number; wins?: number; losses?: number; win_rate_pct?: number; total_pnl_usd?: number; avg_pnl_pct?: number; avg_range_efficiency_pct?: number; avg_hold_min?: number }> | null>(null);
   const [quickActionResult, setQuickActionResult] = useState<QuickActionResult | null>(null);
 
   const connect = useCallback(() => {
@@ -158,6 +159,7 @@ export function useWebSocket() {
             if (msg.wallet) setWallet(msg.wallet);
             if (isCandidateData(msg.candidates)) setCandidates(msg.candidates);
             if (msg.lpOverview) setLpOverview(msg.lpOverview);
+            if (msg.strategyBreakdown) setStrategyBreakdown(msg.strategyBreakdown);
             break;
           case "chat:response":
             setMessages((prev) => [...prev, { role: "assistant", content: msg.text, ts: msg.ts }]);
@@ -228,5 +230,5 @@ export function useWebSocket() {
     setQuickActionResult(null);
   }, []);
 
-  return { connected, messages, notifications, status, timers, positions, wallet, candidates, lpOverview, sendMessage, sendQuickAction, quickActionResult, clearQuickActionResult };
+  return { connected, messages, notifications, status, timers, positions, wallet, candidates, lpOverview, strategyBreakdown, sendMessage, sendQuickAction, quickActionResult, clearQuickActionResult };
 }

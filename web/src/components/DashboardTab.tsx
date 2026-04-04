@@ -7,17 +7,23 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import PositionCard from "./PositionCard";
 import QuickActions from "./QuickActions";
 
+type StrategyStats = {
+  trades?: number; wins?: number; losses?: number; win_rate_pct?: number;
+  total_pnl_usd?: number; avg_pnl_pct?: number; avg_range_efficiency_pct?: number; avg_hold_min?: number;
+};
+
 interface DashboardTabProps {
   positions: PositionData | null;
   wallet: WalletData | null;
   lpOverview: LpOverviewData | null;
+  strategyBreakdown: Record<string, StrategyStats> | null;
   sendQuickAction: (action: string) => void;
   quickActionResult: QuickActionResult | null;
   clearQuickActionResult: () => void;
   onCommand?: (text: string) => void;
 }
 
-export default function DashboardTab({ positions, wallet, lpOverview, sendQuickAction, quickActionResult, clearQuickActionResult, onCommand }: DashboardTabProps) {
+export default function DashboardTab({ positions, wallet, lpOverview, strategyBreakdown, sendQuickAction, quickActionResult, clearQuickActionResult, onCommand }: DashboardTabProps) {
   const oorCount = useMemo(
     () => positions?.positions.filter((p) => !p.in_range).length ?? 0,
     [positions],
@@ -78,6 +84,71 @@ export default function DashboardTab({ positions, wallet, lpOverview, sendQuickA
 
           </CardContent>
         </Card>
+
+        {strategyBreakdown && Object.keys(strategyBreakdown).length > 0 && (() => {
+          const stratKeys = Object.keys(strategyBreakdown);
+          const rows: [string, (s: StrategyStats) => string][] = [
+            ["Trades", (s) => String(s.trades ?? "--")],
+            ["Win Rate", (s) => s.win_rate_pct != null ? `${s.win_rate_pct}%` : "--"],
+            ["Total PnL", (s) => s.total_pnl_usd != null ? `$${s.total_pnl_usd.toFixed(2)}` : "--"],
+            ["Avg PnL", (s) => s.avg_pnl_pct != null ? `${s.avg_pnl_pct.toFixed(2)}%` : "--"],
+            ["Avg Hold", (s) => s.avg_hold_min != null ? `${s.avg_hold_min} min` : "--"],
+            ["Range Eff", (s) => s.avg_range_efficiency_pct != null ? `${s.avg_range_efficiency_pct}%` : "--"],
+            ["Losses", (s) => String(s.losses ?? "--")],
+          ];
+          return (
+            <Card className="relative overflow-hidden">
+              <div className="absolute inset-x-[-20%] top-0 h-px bg-gradient-to-r from-transparent via-teal/60 to-transparent" />
+              <CardContent className="p-4">
+                <div className="mb-3">
+                  <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-amber-200/72">
+                    Strategy Breakdown
+                  </span>
+                  <div className="mt-1 text-base font-medium tracking-tight text-cream">
+                    Performance by deployment strategy
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/8">
+                        <th className="pb-2 text-left font-mono text-[10px] uppercase tracking-[0.14em] text-ash/50" />
+                        {stratKeys.map((k) => (
+                          <th key={k} className="pb-2 text-center font-mono text-[10px] uppercase tracking-[0.14em] text-ash/70">
+                            {k.replace(/_/g, " ")}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map(([label, getter]) => (
+                        <tr key={label} className="border-b border-white/5 last:border-0">
+                          <td className="py-2 pr-3 font-mono text-[10px] uppercase tracking-[0.14em] text-ash/60">{label}</td>
+                          {stratKeys.map((k) => {
+                            const val = getter(strategyBreakdown[k]);
+                            const isWinRate = label === "Win Rate";
+                            const isPnl = label === "Total PnL" || label === "Avg PnL";
+                            let color = "text-cream/90";
+                            if (isWinRate) {
+                              const n = strategyBreakdown[k].win_rate_pct ?? 0;
+                              color = n >= 80 ? "text-emerald-300" : n >= 60 ? "text-cream/90" : "text-red-400";
+                            }
+                            if (isPnl && val.startsWith("$-")) color = "text-red-400";
+                            else if (isPnl && val.startsWith("$") && !val.startsWith("$0")) color = "text-emerald-300";
+                            else if (isPnl && val.startsWith("-")) color = "text-red-400";
+                            return (
+                              <td key={k} className={`py-2 text-center font-mono text-sm ${color}`}>{val}</td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })()}
 
         <QuickActions
           sendQuickAction={sendQuickAction}

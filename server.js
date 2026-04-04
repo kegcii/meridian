@@ -366,6 +366,7 @@ export function startServer(timersFn) {
       wallet: wallet.status === "fulfilled" ? wallet.value : null,
       candidates: candidateResult.status === "fulfilled" ? normalizeCandidatesPayload(candidateResult.value) : null,
       lpOverview: lpOverviewResult.status === "fulfilled" ? lpOverviewResult.value : null,
+      strategyBreakdown: (() => { try { const s = getPerformanceSummary(); return s?.by_strategy ?? null; } catch { return null; } })(),
     });
 
     // ── Incoming messages ──

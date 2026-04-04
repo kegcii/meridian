@@ -334,36 +334,51 @@ export function evolveThresholds(perfData, config, { userConfig, lessonsData } =
   const rationale = {};
 
   // ── 1. maxVolatility ─────────────────────────────────────────
-  // If losers tend to cluster at higher volatility → tighten the ceiling.
-  // If winners span higher volatility safely → we can loosen a bit.
+  // Only tighten when the win rate in the high-volatility zone is
+  // genuinely bad — not just because a few losers exist there.
+  // Also respects a user-configurable floor so opportunities aren't
+  // filtered out by over-aggressive auto-tightening.
   {
     const winnerVols = winners.map((p) => p.volatility).filter(isFiniteNum);
     const loserVols  = losers.map((p) => p.volatility).filter(isFiniteNum);
     const current    = config.screening.maxVolatility;
+    const floor      = userConfig?.maxVolatilityFloor ?? 3.0;
 
     if (loserVols.length >= 2) {
-      // 25th percentile of loser volatilities — this is where things start going wrong
       const loserP25 = percentile(loserVols, 25);
-      if (loserP25 < current) {
-        // Tighten: new ceiling = loserP25 + a small buffer
+      // Check win rate in the zone around the loser cluster
+      // Only tighten if the zone is actually net-negative
+      const zoneMin = loserP25 * 0.8;
+      const zoneMax = loserP25 * 1.3;
+      const zoneWinners = winners.filter((p) => isFiniteNum(p.volatility) && p.volatility >= zoneMin && p.volatility <= zoneMax).length;
+      const zoneLosers  = losers.filter((p) => isFiniteNum(p.volatility) && p.volatility >= zoneMin && p.volatility <= zoneMax).length;
+      const zoneWR = (zoneWinners + zoneLosers) > 0 ? zoneWinners / (zoneWinners + zoneLosers) : 1;
+
+      if (loserP25 < current && zoneWR < 0.5) {
+        // Zone is genuinely bad — tighten, but respect the floor
         const target  = loserP25 * 1.15;
-        const newVal  = clamp(nudge(current, target, MAX_CHANGE_PER_STEP), 1.0, 20.0);
+        const newVal  = clamp(nudge(current, target, MAX_CHANGE_PER_STEP), floor, 20.0);
         const rounded = Number(newVal.toFixed(1));
-        if (rounded < current) {
+        if (rounded < current && rounded >= floor) {
           changes.maxVolatility = rounded;
-          rationale.maxVolatility = `Losers clustered at volatility ~${loserP25.toFixed(1)} — tightened from ${current} → ${rounded}`;
+          rationale.maxVolatility = `Losers clustered at volatility ~${loserP25.toFixed(1)} (zone WR ${(zoneWR * 100).toFixed(0)}%) — tightened from ${current} → ${rounded} (floor: ${floor})`;
         }
       }
-    } else if (winnerVols.length >= 3 && losers.length === 0) {
-      // All winners so far — loosen conservatively so we don't miss good pools
+    }
+
+    // Loosen: if winners exist above current threshold and recent overall
+    // win rate is healthy (≥60%), we're leaving money on the table
+    if (!changes.maxVolatility && winnerVols.length >= 3) {
+      const overallWR = winners.length / (winners.length + losers.length);
+      const winnersAbove = winnerVols.filter((v) => v > current * 0.9);
       const winnerP75 = percentile(winnerVols, 75);
-      if (winnerP75 > current * 1.1) {
+      if (winnerP75 > current * 1.1 && overallWR >= 0.6 && winnersAbove.length >= 2) {
         const target  = winnerP75 * 1.1;
-        const newVal  = clamp(nudge(current, target, MAX_CHANGE_PER_STEP), 1.0, 20.0);
+        const newVal  = clamp(nudge(current, target, MAX_CHANGE_PER_STEP), floor, 20.0);
         const rounded = Number(newVal.toFixed(1));
         if (rounded > current) {
           changes.maxVolatility = rounded;
-          rationale.maxVolatility = `All ${winners.length} positions profitable — loosened from ${current} → ${rounded}`;
+          rationale.maxVolatility = `Overall WR ${(overallWR * 100).toFixed(0)}% with ${winnersAbove.length} winners near/above ceiling — loosened from ${current} → ${rounded}`;
         }
       }
     }
@@ -709,15 +724,16 @@ export function evolveFromLessons(lessons, config, { userConfig, lessonsData } =
 
   // 3. High failure rate at specific volatility levels (from tags like "volatility_4")
   const volTags = Object.entries(tagCounts).filter(([t]) => t.startsWith("volatility_"));
+  const volFloor = userConfig?.maxVolatilityFloor ?? 3.0;
   for (const [tag, count] of volTags) {
     if (count >= 3) {
       const vol = parseFloat(tag.replace("volatility_", ""));
       const current = config.screening.maxVolatility ?? 10;
       if (vol < current) {
-        const newVal = clamp(Number((vol * 1.1).toFixed(1)), 1.0, 20.0);
-        if (newVal < current && !changes.maxVolatility) {
+        const newVal = clamp(Number((vol * 1.1).toFixed(1)), volFloor, 20.0);
+        if (newVal < current && newVal >= volFloor && !changes.maxVolatility) {
           changes.maxVolatility = newVal;
-          rationale.maxVolatility = `${count} failure lessons at volatility ~${vol} — tightened max from ${current} → ${newVal}`;
+          rationale.maxVolatility = `${count} failure lessons at volatility ~${vol} — tightened max from ${current} → ${newVal} (floor: ${volFloor})`;
         }
       }
     }
@@ -1084,6 +1100,35 @@ export function getPerformanceSummary() {
   const avgRangeEfficiency = p.reduce((s, x) => s + x.range_efficiency, 0) / p.length;
   const wins = p.filter((x) => x.pnl_usd > 0).length;
 
+  // ── Per-strategy breakdown ──
+  const strategyGroups = {};
+  for (const entry of p) {
+    const strat = entry.strategy || "unknown";
+    if (!strategyGroups[strat]) strategyGroups[strat] = [];
+    strategyGroups[strat].push(entry);
+  }
+
+  const by_strategy = {};
+  for (const [strat, entries] of Object.entries(strategyGroups)) {
+    const arr = /** @type {typeof p} */ (entries);
+    const sWins = arr.filter((x) => x.pnl_usd > 0).length;
+    const sLosses = arr.filter((x) => x.pnl_usd <= 0).length;
+    const sTotalPnl = arr.reduce((s, x) => s + x.pnl_usd, 0);
+    const sAvgPnlPct = arr.reduce((s, x) => s + x.pnl_pct, 0) / arr.length;
+    const sAvgRangeEff = arr.reduce((s, x) => s + x.range_efficiency, 0) / arr.length;
+    const sAvgHoldMin = arr.reduce((s, x) => s + (x.minutes_held || 0), 0) / arr.length;
+    by_strategy[strat] = {
+      trades: arr.length,
+      wins: sWins,
+      losses: sLosses,
+      win_rate_pct: Math.round((sWins / arr.length) * 100),
+      total_pnl_usd: Math.round(sTotalPnl * 100) / 100,
+      avg_pnl_pct: Math.round(sAvgPnlPct * 100) / 100,
+      avg_range_efficiency_pct: Math.round(sAvgRangeEff * 10) / 10,
+      avg_hold_min: Math.round(sAvgHoldMin),
+    };
+  }
+
   return {
     total_positions_closed: p.length,
     total_pnl_usd: Math.round(totalPnl * 100) / 100,
@@ -1091,5 +1136,6 @@ export function getPerformanceSummary() {
     avg_range_efficiency_pct: Math.round(avgRangeEfficiency * 10) / 10,
     win_rate_pct: Math.round((wins / p.length) * 100),
     total_lessons: data.lessons.length,
+    by_strategy,
   };
 }

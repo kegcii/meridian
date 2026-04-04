@@ -353,14 +353,61 @@ function renderPerformance(data: unknown) {
     { label: "Avg Range Efficiency", value: d.avg_range_efficiency != null ? `${Number(d.avg_range_efficiency).toFixed(1)}%` : (d.avg_range_efficiency_pct != null ? `${Number(d.avg_range_efficiency_pct).toFixed(1)}%` : "--") },
     { label: "Total Lessons", value: d.total_lessons ?? "--" },
   ];
+
+  const byStrategy = (d.by_strategy ?? {}) as Record<string, {
+    trades?: number; wins?: number; losses?: number; win_rate_pct?: number;
+    total_pnl_usd?: number; avg_pnl_pct?: number; avg_range_efficiency_pct?: number; avg_hold_min?: number;
+  }>;
+  const stratKeys = Object.keys(byStrategy);
+
   return (
-    <div className="flex flex-col gap-2">
-      {stats.map((s) => (
-        <div key={s.label} className="flex items-center justify-between rounded-xl border border-white/8 bg-white/4 px-4 py-3">
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ash/62">{s.label}</span>
-          <span className="font-mono text-lg text-cream">{String(s.value)}</span>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2">
+        {stats.map((s) => (
+          <div key={s.label} className="flex items-center justify-between rounded-xl border border-white/8 bg-white/4 px-4 py-3">
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ash/62">{s.label}</span>
+            <span className="font-mono text-lg text-cream">{String(s.value)}</span>
+          </div>
+        ))}
+      </div>
+
+      {stratKeys.length > 0 && (
+        <div className="rounded-xl border border-white/8 bg-white/4 p-4">
+          <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.22em] text-amber-200/70">
+            Strategy Breakdown
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead></TableHead>
+                {stratKeys.map((k) => (
+                  <TableHead key={k} className="text-center font-mono text-[10px] uppercase tracking-[0.14em]">
+                    {k.replace(/_/g, " ")}
+                  </TableHead>
+                ))}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {([
+                ["Trades", (s: typeof byStrategy[string]) => String(s.trades ?? "--")],
+                ["Win Rate", (s: typeof byStrategy[string]) => s.win_rate_pct != null ? `${s.win_rate_pct}%` : "--"],
+                ["Total PnL", (s: typeof byStrategy[string]) => s.total_pnl_usd != null ? `$${s.total_pnl_usd.toFixed(2)}` : "--"],
+                ["Avg PnL", (s: typeof byStrategy[string]) => s.avg_pnl_pct != null ? `${s.avg_pnl_pct.toFixed(2)}%` : "--"],
+                ["Avg Hold", (s: typeof byStrategy[string]) => s.avg_hold_min != null ? `${s.avg_hold_min} min` : "--"],
+                ["Avg Range Eff", (s: typeof byStrategy[string]) => s.avg_range_efficiency_pct != null ? `${s.avg_range_efficiency_pct}%` : "--"],
+                ["Losses", (s: typeof byStrategy[string]) => String(s.losses ?? "--")],
+              ] as [string, (s: typeof byStrategy[string]) => string][]).map(([label, getter]) => (
+                <TableRow key={label}>
+                  <TableCell className="font-mono text-[10px] uppercase tracking-[0.14em] text-ash/62">{label}</TableCell>
+                  {stratKeys.map((k) => (
+                    <TableCell key={k} className="text-center font-mono text-cream/90">{getter(byStrategy[k])}</TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
-      ))}
+      )}
     </div>
   );
 }

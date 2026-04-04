@@ -389,6 +389,127 @@ export default function IntelTab() {
             </div>
 
             <div className="mt-4 flex flex-col gap-2">
+              <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-ash/60">Experiment Summary</div>
+              {(() => {
+                const experiments = data?.autoresearch.recentExperiments || [];
+                if (experiments.length === 0) return <div className="text-sm text-ash/46">No experiments yet.</div>;
+                const kept = experiments.filter((e) => e.status === "kept").length;
+                const reverted = experiments.filter((e) => e.status.includes("revert")).length;
+                const inconclusive = experiments.filter((e) => e.status.includes("inconclusive")).length;
+                return (
+                  <>
+                    <div className="overflow-x-auto rounded-2xl border border-white/8 bg-white/4">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-white/10">
+                            <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.14em] text-ash/50">#</th>
+                            <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.14em] text-ash/50">Status</th>
+                            <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.14em] text-ash/50">Section</th>
+                            <th className="px-3 py-2 text-left font-mono text-[9px] uppercase tracking-[0.14em] text-ash/50">Hypothesis</th>
+                            <th className="px-3 py-2 text-right font-mono text-[9px] uppercase tracking-[0.14em] text-ash/50">Baseline → Trial</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {experiments.map((exp, i) => {
+                            const baseWR = exp.baseline?.win_rate != null ? `WR ${fmtPct(exp.baseline.win_rate)}` : "";
+                            const trialWR = exp.trial?.win_rate != null ? fmtPct(exp.trial.win_rate) : "--";
+                            const basePnl = exp.baseline?.avg_pnl_pct != null ? `, PnL ${fmtPct(exp.baseline.avg_pnl_pct)}` : "";
+                            const trialPnl = exp.trial?.avg_pnl_pct != null ? `, ${fmtPct(exp.trial.avg_pnl_pct)}` : "";
+                            const statusColor = exp.status === "kept" ? "text-emerald-300" : exp.status.includes("revert") ? "text-red-400" : "text-ash/70";
+                            return (
+                              <tr key={exp.id ?? i} className="border-b border-white/5 last:border-0">
+                                <td className="px-3 py-2 font-mono text-xs text-ash/50">{experiments.length - i}</td>
+                                <td className={`px-3 py-2 font-mono text-[10px] uppercase tracking-[0.1em] ${statusColor}`}>{exp.status}</td>
+                                <td className="px-3 py-2 text-xs text-cream/80">{exp.section}</td>
+                                <td className="max-w-[200px] truncate px-3 py-2 text-xs text-cream/70">{exp.hypothesis}</td>
+                                <td className="px-3 py-2 text-right font-mono text-[11px] text-cream/80">
+                                  {baseWR}{basePnl} → {trialWR}{trialPnl}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="rounded-2xl border border-white/8 bg-white/4 px-4 py-3">
+                      <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-ash/60 mb-3">Key Patterns</div>
+                      <div className="flex flex-col gap-2 text-sm text-cream/84">
+                        {(() => {
+                          const patterns: string[] = [];
+
+                          // 1. Count stats
+                          patterns.push(`${kept} kept, ${reverted} reverted, ${inconclusive} inconclusive in the last ${experiments.length}`);
+
+                          // 2. Detect dominant section
+                          const sectionCounts: Record<string, number> = {};
+                          for (const e of experiments) {
+                            sectionCounts[e.section] = (sectionCounts[e.section] || 0) + 1;
+                          }
+                          const topSection = Object.entries(sectionCounts).sort((a, b) => b[1] - a[1])[0];
+                          if (topSection && topSection[1] > 1) {
+                            const sectionExps = experiments.filter((e) => e.section === topSection[0]);
+                            const sKept = sectionExps.filter((e) => e.status === "kept").length;
+                            const sReverted = sectionExps.filter((e) => e.status.includes("revert")).length;
+                            if (sKept > sReverted) {
+                              patterns.push(`"${topSection[0]}" experiments are trending positive — ${sKept}/${topSection[1]} kept`);
+                            } else if (sReverted > sKept) {
+                              patterns.push(`"${topSection[0]}" experiments keep getting reverted (${sReverted}/${topSection[1]}) — changes in this area may be too aggressive`);
+                            } else {
+                              patterns.push(`"${topSection[0]}" experiments are inconclusive — ${topSection[1]} attempts with mixed results`);
+                            }
+                          }
+
+                          // 3. Detect tightening pattern (common theme in hypotheses)
+                          const tightenExps = experiments.filter((e) => e.hypothesis.toLowerCase().includes("tighten"));
+                          if (tightenExps.length >= 2) {
+                            const tKept = tightenExps.filter((e) => e.status === "kept").length;
+                            const tReverted = tightenExps.filter((e) => e.status.includes("revert")).length;
+                            if (tReverted > tKept) {
+                              patterns.push(`Tightening thresholds too aggressively gets reverted (#${tightenExps.filter((e) => e.status.includes("revert")).map((_, j) => experiments.indexOf(tightenExps.filter((e2) => e2.status.includes("revert"))[j])).map((idx) => experiments.length - idx).join(", #")})`);
+                            } else if (tKept > tReverted) {
+                              patterns.push(`Tightening thresholds is consistently improving results — ${tKept}/${tightenExps.length} kept`);
+                            }
+                          }
+
+                          // 4. Detect WR improvement trend in kept experiments
+                          const keptExps = experiments.filter((e) => e.status === "kept" && e.baseline?.win_rate != null && e.trial?.win_rate != null);
+                          if (keptExps.length >= 2) {
+                            const avgWRGain = keptExps.reduce((s, e) => s + ((e.trial?.win_rate ?? 0) - (e.baseline?.win_rate ?? 0)), 0) / keptExps.length;
+                            if (avgWRGain > 0) {
+                              patterns.push(`Kept experiments average +${avgWRGain.toFixed(1)}% WR improvement over baseline`);
+                            }
+                          }
+
+                          // 5. Detect OOR / mid-pump theme
+                          const oorExps = experiments.filter((e) => e.hypothesis.toLowerCase().includes("oor") || e.hypothesis.toLowerCase().includes("mid-pump") || e.hypothesis.toLowerCase().includes("already pump") || e.hypothesis.toLowerCase().includes("rally"));
+                          if (oorExps.length >= 2) {
+                            const oKept = oorExps.filter((e) => e.status === "kept").length;
+                            if (oKept > 0) {
+                              patterns.push(`System is learning to avoid mid-pump/OOR entries — ${oKept}/${oorExps.length} related experiments kept`);
+                            }
+                          }
+
+                          // 6. Cooldown info
+                          if (experiments.length >= 4) {
+                            const active = data?.autoresearch.active;
+                            patterns.push(`Cooldown is ${data?.autoresearch.cooldownRemaining ?? 0} — ${active ? "experiment active" : "next experiment launches after next close"}`);
+                          }
+
+                          return patterns.map((p, i) => (
+                            <div key={i} className="flex items-start gap-2">
+                              <span className="mt-0.5 text-amber-200/60">•</span>
+                              <span>{p}</span>
+                            </div>
+                          ));
+                        })()}
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+
+            <div className="mt-4 flex flex-col gap-2">
               <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-ash/60">Recent Experiments</div>
               {(data?.autoresearch.recentExperiments || []).length ? (
                 data!.autoresearch.recentExperiments.map((experiment) => (

@@ -13,13 +13,14 @@ interface DataSidebarProps {
   notifications: Notification[];
   status: StatusInfo;
   lpOverview: LpOverviewData | null;
+  strategyBreakdown: Record<string, { trades?: number; wins?: number; losses?: number; win_rate_pct?: number; total_pnl_usd?: number; avg_pnl_pct?: number; avg_range_efficiency_pct?: number; avg_hold_min?: number }> | null;
   onCommand: (text: string) => void;
   sendQuickAction: (action: string) => void;
   quickActionResult: QuickActionResult | null;
   clearQuickActionResult: () => void;
 }
 
-export default function DataSidebar({ positions, wallet, candidates, notifications, lpOverview, onCommand, sendQuickAction, quickActionResult, clearQuickActionResult }: DataSidebarProps) {
+export default function DataSidebar({ positions, wallet, candidates, notifications, lpOverview, strategyBreakdown, onCommand, sendQuickAction, quickActionResult, clearQuickActionResult }: DataSidebarProps) {
   const activeAlerts = positions?.positions.filter((position) => !position.in_range).length ?? 0;
   const openPositions = positions?.total_positions ?? 0;
 
@@ -53,7 +54,7 @@ export default function DataSidebar({ positions, wallet, candidates, notificatio
       </TabsList>
 
       <TabsContent value="dashboard" className="flex-1">
-        <DashboardTab positions={positions} wallet={wallet} lpOverview={lpOverview} sendQuickAction={sendQuickAction} quickActionResult={quickActionResult} clearQuickActionResult={clearQuickActionResult} onCommand={onCommand} />
+        <DashboardTab positions={positions} wallet={wallet} lpOverview={lpOverview} strategyBreakdown={strategyBreakdown} sendQuickAction={sendQuickAction} quickActionResult={quickActionResult} clearQuickActionResult={clearQuickActionResult} onCommand={onCommand} />
       </TabsContent>
 
       <TabsContent value="candidates" className="flex-1">
