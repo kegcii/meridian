@@ -4,7 +4,6 @@ data/nuggets/
 
 # Environment & secrets
 .env
-.env.*
 
 # User config (contains RPC URL, wallet key, API keys)
 user-config.json

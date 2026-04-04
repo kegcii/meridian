@@ -587,11 +587,13 @@ export async function deployPosition({
         volatility,
         fee_tvl_ratio,
         organic_score,
-        amount_sol: 0, // will update after liquidity is added
+        amount_sol: 0,
         amount_x: 0,
         active_bin: activeBin.binId,
         initial_value_usd: 0,
         study_avg_hold_hours,
+        deploy_timeframe: config.screening.timeframe,
+        deploy_categories: config.screening.categories,
       });
       log("deploy", `Pre-tracked position ${posAddr.slice(0, 8)} (wide-range: liquidity pending)`);
 
@@ -660,6 +662,8 @@ export async function deployPosition({
       initial_value_usd,
       study_avg_hold_hours,
       signal_snapshot,
+      deploy_timeframe: config.screening.timeframe,
+      deploy_categories: config.screening.categories,
     });
 
     return {
@@ -683,6 +687,7 @@ const POSITIONS_CACHE_TTL = 5 * 60_000; // 5 minutes
 
 let _positionsCache = null;
 let _positionsCacheAt = 0;
+const _livePoolCache = new Map(); // pool → { ts, pool, sw }
 let _positionsInflight = null; // deduplicates concurrent calls
 
 // ─── Fetch DLMM PnL API for all positions in a pool ────────────
@@ -1157,13 +1162,14 @@ export async function getMyPositions({ force = false } = {}) {
       return {
         position: r.position,
         pool: r.pool,
-        pair: r.pair,
+        pair: trackedFinal?.pool_name || r.pair,
         base_mint: r.base_mint,
         strategy: trackedFinal?.strategy || p?._lpa_strategy || "bid_ask",
         strategy_type: p?._lpa_strategy || trackedFinal?.strategy_type || null,
         sol_split_pct: trackedFinal?.sol_split_pct ?? composition?.sol_pct ?? null,
         bin_step: trackedFinal?.bin_step || null,
         volatility: trackedFinal?.volatility || null,
+        fee_tvl_ratio: trackedFinal?.fee_tvl_ratio || null,
         lower_bin: lowerBin,
         upper_bin: upperBin,
         active_bin: activeBin,
@@ -1184,10 +1190,58 @@ export async function getMyPositions({ force = false } = {}) {
         age_minutes: ageMinutes,
         minutes_out_of_range: minutesOutOfRange(r.position),
         study_avg_hold_hours: trackedFinal?.study_avg_hold_hours || null,
+        deploy_timeframe: trackedFinal?.deploy_timeframe || null,
+        deploy_categories: trackedFinal?.deploy_categories || null,
       };
     }));
 
-    const result = { wallet: walletAddress, total_positions: positions.length, positions };
+    // ── Live pool data enrichment (cached 60s) ──
+    const livePoolIds = [...new Set(positions.map((p) => p.pool))];
+    if (livePoolIds.length > 0) {
+      const now = Date.now();
+      const LIVE_CACHE_TTL = 60_000;
+
+      // Determine which pools need fresh fetch
+      const stale = livePoolIds.filter((pool) => {
+        const c = _livePoolCache.get(pool);
+        return !c || now - c.ts > LIVE_CACHE_TTL;
+      });
+
+      if (stale.length > 0) {
+        const { getPoolDetail } = await import("./screening.js");
+        const { checkSmartWalletsOnPool } = await import("../smart-wallets.js");
+
+        const [poolResults, swResults] = await Promise.all([
+          Promise.allSettled(stale.map((pool) => getPoolDetail({ pool_address: pool, timeframe: config.screening.timeframe || "5m" }).catch(() => null))),
+          Promise.allSettled(stale.map((pool) => checkSmartWalletsOnPool({ pool_address: pool }).catch(() => null))),
+        ]);
+
+        stale.forEach((pool, i) => {
+          _livePoolCache.set(pool, {
+            ts: now,
+            pool: poolResults[i].status === "fulfilled" ? poolResults[i].value : null,
+            sw: swResults[i].status === "fulfilled" ? swResults[i].value : null,
+          });
+        });
+      }
+
+      for (const pos of positions) {
+        const cached = _livePoolCache.get(pos.pool);
+        if (cached?.pool) {
+          pos.live_volatility = cached.pool.volatility ?? null;
+          pos.live_fee_tvl_ratio = cached.pool.fee_active_tvl_ratio ?? null;
+          pos.live_volume = cached.pool.volume ?? null;
+          pos.live_fee_pct = cached.pool.fee_pct ?? null;
+        }
+        if (cached?.sw) {
+          pos.smart_wallets_in_pool = cached.sw.in_pool?.length ?? 0;
+          pos.smart_wallets_total = cached.sw.tracked_wallets ?? 0;
+          pos.smart_wallets_names = cached.sw.in_pool?.map((w) => w.name) ?? [];
+        }
+      }
+    }
+
+    const result = { wallet: walletAddress, total_positions: positions.length, positions, screening_config: { timeframe: config.screening.timeframe, categories: config.screening.categories } };
     await syncOpenPositions(positions.map((p) => p.position));
     _positionsCache = result;
     _positionsCacheAt = Date.now();

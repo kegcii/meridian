@@ -14,7 +14,7 @@ interface DataSidebarProps {
   status: StatusInfo;
   lpOverview: LpOverviewData | null;
   strategyBreakdown: Record<string, { trades?: number; wins?: number; losses?: number; win_rate_pct?: number; total_pnl_usd?: number; avg_pnl_pct?: number; avg_range_efficiency_pct?: number; avg_hold_min?: number }> | null;
-  performanceExtra: { daily?: Record<string, { trades: number; wins: number; pnl_usd: number; win_rate_pct: number }>; timeframes?: Record<string, { trades: number; wins: number; losses: number; pnl_usd: number; win_rate_pct: number }> } | null;
+  performanceExtra: { daily?: Record<string, { trades: number; wins: number; pnl_usd: number; pnl_sol?: number; win_rate_pct: number }>; timeframes?: Record<string, { trades: number; wins: number; losses: number; pnl_usd: number; pnl_sol?: number; win_rate_pct: number }>; total_pnl_usd?: number } | null;
   onCommand: (text: string) => void;
   sendQuickAction: (action: string) => void;
   quickActionResult: QuickActionResult | null;

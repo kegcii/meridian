@@ -1089,7 +1089,7 @@ export function getPerformanceHistory({ hours = 24, limit = 50 } = {}) {
 /**
  * Get performance stats summary.
  */
-export function getPerformanceSummary() {
+export function getPerformanceSummary(solPrice = 0) {
   const data = load();
   const p = data.performance;
 
@@ -1134,13 +1134,14 @@ export function getPerformanceSummary() {
   for (const entry of p) {
     const day = (entry.recorded_at || "").slice(0, 10); // "YYYY-MM-DD"
     if (!day) continue;
-    if (!daily[day]) daily[day] = { trades: 0, wins: 0, pnl_usd: 0 };
+    if (!daily[day]) daily[day] = { trades: 0, wins: 0, pnl_usd: 0, pnl_sol: 0 };
     daily[day].trades++;
     if (entry.pnl_usd > 0) daily[day].wins++;
     daily[day].pnl_usd += entry.pnl_usd;
   }
   for (const d of Object.values(daily)) {
     d.pnl_usd = Math.round(d.pnl_usd * 100) / 100;
+    d.pnl_sol = solPrice > 0 ? Math.round((d.pnl_usd / solPrice) * 10000) / 10000 : 0;
     d.win_rate_pct = d.trades > 0 ? Math.round((d.wins / d.trades) * 100) : 0;
   }
 
@@ -1157,6 +1158,7 @@ export function getPerformanceSummary() {
       wins: tWins,
       losses: subset.length - tWins,
       pnl_usd: Math.round(tPnl * 100) / 100,
+      pnl_sol: solPrice > 0 ? Math.round((tPnl / solPrice) * 10000) / 10000 : 0,
       win_rate_pct: subset.length > 0 ? Math.round((tWins / subset.length) * 100) : 0,
     };
   }

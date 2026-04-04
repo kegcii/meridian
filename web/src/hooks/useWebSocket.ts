@@ -45,11 +45,23 @@ export interface PositionInfo {
   fee_tvl_ratio?: number | null;
   total_value_sol?: number | null;
   total_value_usd?: number | null;
+  live_volatility?: number | null;
+  live_fee_tvl_ratio?: number | null;
+  live_volume?: number | null;
+  live_fee_pct?: number | null;
+  smart_wallets_in_pool?: number;
+  smart_wallets_total?: number;
+  smart_wallets_names?: string[];
+  deploy_timeframe?: string | null;
+  deploy_categories?: string[] | null;
+  oor_direction?: string | null;
+  minutes_out_of_range?: number | null;
 }
 
 export interface PositionData {
   total_positions: number;
   positions: PositionInfo[];
+  screening_config?: { timeframe?: string; categories?: string[] };
 }
 
 export interface WalletData {

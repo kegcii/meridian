@@ -12,15 +12,15 @@ type StrategyStats = {
   total_pnl_usd?: number; avg_pnl_pct?: number; avg_range_efficiency_pct?: number; avg_hold_min?: number;
 };
 
-type DailyEntry = { trades: number; wins: number; pnl_usd: number; win_rate_pct: number };
-type TimeframeEntry = { trades: number; wins: number; losses: number; pnl_usd: number; win_rate_pct: number };
+type DailyEntry = { trades: number; wins: number; pnl_usd: number; pnl_sol?: number; win_rate_pct: number };
+type TimeframeEntry = { trades: number; wins: number; losses: number; pnl_usd: number; pnl_sol?: number; win_rate_pct: number };
 
 interface DashboardTabProps {
   positions: PositionData | null;
   wallet: WalletData | null;
   lpOverview: LpOverviewData | null;
   strategyBreakdown: Record<string, StrategyStats> | null;
-  performanceExtra: { daily?: Record<string, DailyEntry>; timeframes?: Record<string, TimeframeEntry> } | null;
+  performanceExtra: { daily?: Record<string, DailyEntry>; timeframes?: Record<string, TimeframeEntry>; total_pnl_usd?: number } | null;
   sendQuickAction: (action: string) => void;
   quickActionResult: QuickActionResult | null;
   clearQuickActionResult: () => void;
@@ -29,6 +29,7 @@ interface DashboardTabProps {
 
 export default function DashboardTab({ positions, wallet, lpOverview, strategyBreakdown, performanceExtra, sendQuickAction, quickActionResult, clearQuickActionResult, onCommand }: DashboardTabProps) {
   const [pnlTimeframe, setPnlTimeframe] = useState<"1d" | "7d" | "30d" | "all">("all");
+  const [pnlUnit, setPnlUnit] = useState<"sol" | "usd">("sol");
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
 
   const oorCount = useMemo(
@@ -42,10 +43,18 @@ export default function DashboardTab({ positions, wallet, lpOverview, strategyBr
   );
 
   const pnlForTimeframe = useMemo(() => {
-    if (pnlTimeframe === "all") return lpOverview ? { pnl: lpOverview.total_pnl_sol, trades: lpOverview.closed_positions, wr: lpOverview.win_rate_pct } : null;
+    if (pnlTimeframe === "all") {
+      if (!lpOverview) return null;
+      return {
+        sol: lpOverview.total_pnl_sol,
+        usd: performanceExtra?.total_pnl_usd ?? lpOverview.total_pnl_usd ?? 0,
+        trades: lpOverview.closed_positions,
+        wr: lpOverview.win_rate_pct,
+      };
+    }
     const tf = performanceExtra?.timeframes?.[pnlTimeframe];
     if (!tf) return null;
-    return { pnl: tf.pnl_usd, trades: tf.trades, wr: tf.win_rate_pct };
+    return { sol: tf.pnl_sol ?? 0, usd: tf.pnl_usd, trades: tf.trades, wr: tf.win_rate_pct };
   }, [pnlTimeframe, performanceExtra, lpOverview]);
 
   const dailyData = performanceExtra?.daily?.[selectedDate] ?? null;
@@ -60,11 +69,9 @@ export default function DashboardTab({ positions, wallet, lpOverview, strategyBr
     <ScrollArea className="h-full">
       <div className="flex flex-col gap-3 p-1">
         <Card className="relative overflow-hidden">
-          <div className="absolute inset-x-[-20%] top-0 h-px bg-gradient-to-r from-transparent via-amber-200/80 to-transparent" />
-          <div className="absolute -left-10 top-10 h-36 w-36 rounded-full bg-[radial-gradient(circle,rgba(255,209,102,0.16),transparent_72%)]" />
-          <div className="absolute right-0 top-0 h-full w-1/3 bg-[linear-gradient(135deg,rgba(255,209,102,0.08),transparent_56%)]" />
-          <CardContent className="p-4">
-            <div className="flex flex-col gap-4 rounded-[24px] border border-amber-200/12 bg-[linear-gradient(180deg,rgba(255,209,102,0.1),rgba(255,209,102,0.02))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+          <div className="pointer-events-none absolute inset-x-[-20%] top-0 h-px bg-gradient-to-r from-transparent via-amber-200/50 to-transparent" />
+          <CardContent className="relative z-10 p-4">
+            <div className="flex flex-col gap-4 rounded-[24px] border border-amber-200/8 bg-white/[0.03] p-5">
               {/* Header */}
               <div className="flex items-start justify-between gap-3">
                 <div className="flex flex-col gap-2">
@@ -97,13 +104,20 @@ export default function DashboardTab({ positions, wallet, lpOverview, strategyBr
                 </div>
               </div>
 
-              {/* PnL with timeframe selector */}
+              {/* PnL with timeframe selector + unit toggle */}
               <div className="border-t border-white/8 pt-3">
                 <div className="flex items-center justify-between mb-2">
-                  <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-ash/56">Net PnL</div>
+                  <div className="flex items-center gap-2">
+                    <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-ash/56">Net PnL</div>
+                    <div className="flex rounded-md border border-white/10 overflow-hidden">
+                      <button type="button" onClick={() => setPnlUnit("sol")} className={`font-mono text-[9px] px-2 py-0.5 transition-colors ${pnlUnit === "sol" ? "bg-white/10 text-cream" : "text-ash/40 hover:text-cream"}`}>SOL</button>
+                      <button type="button" onClick={() => setPnlUnit("usd")} className={`font-mono text-[9px] px-2 py-0.5 transition-colors ${pnlUnit === "usd" ? "bg-white/10 text-cream" : "text-ash/40 hover:text-cream"}`}>USD</button>
+                    </div>
+                  </div>
                   <div className="flex gap-1">
                     {(["1d", "7d", "30d", "all"] as const).map((tf) => (
                       <button
+                        type="button"
                         key={tf}
                         onClick={() => setPnlTimeframe(tf)}
                         className={`font-mono text-[10px] px-2 py-0.5 rounded-md transition-colors ${pnlTimeframe === tf ? "bg-white/10 text-cream border border-white/15" : "text-ash/50 hover:text-cream"}`}
@@ -113,15 +127,19 @@ export default function DashboardTab({ positions, wallet, lpOverview, strategyBr
                     ))}
                   </div>
                 </div>
-                {pnlForTimeframe ? (
-                  <div className="flex items-baseline gap-3">
-                    <span className={`font-mono text-2xl ${pnlForTimeframe.pnl >= 0 ? "text-emerald-300" : "text-red-400"}`}>
-                      {pnlForTimeframe.pnl >= 0 ? "+" : ""}{pnlTimeframe === "all" ? pnlForTimeframe.pnl.toFixed(3) : `$${pnlForTimeframe.pnl.toFixed(2)}`}
-                    </span>
-                    <span className="font-mono text-[10px] text-ash/50">{pnlTimeframe === "all" ? "SOL" : "USD"}</span>
-                    <span className="font-mono text-[10px] text-ash/44">{pnlForTimeframe.trades} trades · {pnlForTimeframe.wr.toFixed(0)}% WR</span>
-                  </div>
-                ) : (
+                {pnlForTimeframe ? (() => {
+                  const val = pnlUnit === "sol" ? pnlForTimeframe.sol : pnlForTimeframe.usd;
+                  const fmt = pnlUnit === "sol" ? val.toFixed(4) : `$${val.toFixed(2)}`;
+                  return (
+                    <div className="flex items-baseline gap-3">
+                      <span className={`font-mono text-2xl ${val >= 0 ? "text-emerald-300" : "text-red-400"}`}>
+                        {val >= 0 ? "+" : ""}{fmt}
+                      </span>
+                      <span className="font-mono text-[10px] text-ash/50">{pnlUnit.toUpperCase()}</span>
+                      <span className="font-mono text-[10px] text-ash/44">{pnlForTimeframe.trades} trades · {pnlForTimeframe.wr.toFixed(0)}% WR</span>
+                    </div>
+                  );
+                })() : (
                   <Skeleton className="h-8 w-32" />
                 )}
               </div>
@@ -131,9 +149,9 @@ export default function DashboardTab({ positions, wallet, lpOverview, strategyBr
                 <div className="flex items-center justify-between mb-2">
                   <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-ash/56">Daily PnL</div>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => shiftDate(-1)} className="text-ash/50 hover:text-cream text-sm px-1">◀</button>
+                    <button type="button" onClick={() => shiftDate(-1)} className="text-ash/50 hover:text-cream text-sm px-1">◀</button>
                     <span className="font-mono text-[11px] text-cream/80 border border-white/10 rounded-md px-2 py-0.5">{selectedDate}</span>
-                    <button onClick={() => shiftDate(1)} className="text-ash/50 hover:text-cream text-sm px-1">▶</button>
+                    <button type="button" onClick={() => shiftDate(1)} className="text-ash/50 hover:text-cream text-sm px-1">▶</button>
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
@@ -143,8 +161,8 @@ export default function DashboardTab({ positions, wallet, lpOverview, strategyBr
                   </div>
                   <div className="rounded-xl border border-white/8 bg-white/4 px-3 py-2 text-center">
                     <div className="font-mono text-[9px] uppercase text-ash/50">PnL</div>
-                    <div className={`font-mono text-sm mt-1 ${(dailyData?.pnl_usd ?? 0) >= 0 ? "text-emerald-300" : "text-red-400"}`}>
-                      {dailyData ? `$${dailyData.pnl_usd.toFixed(2)}` : "$0.00"}
+                    <div className={`font-mono text-sm mt-1 ${((pnlUnit === "sol" ? dailyData?.pnl_sol : dailyData?.pnl_usd) ?? 0) >= 0 ? "text-emerald-300" : "text-red-400"}`}>
+                      {dailyData ? (pnlUnit === "sol" ? `${(dailyData.pnl_sol ?? 0).toFixed(4)} SOL` : `$${dailyData.pnl_usd.toFixed(2)}`) : (pnlUnit === "sol" ? "0 SOL" : "$0.00")}
                     </div>
                   </div>
                   <div className="rounded-xl border border-white/8 bg-white/4 px-3 py-2 text-center">
@@ -252,7 +270,7 @@ export default function DashboardTab({ positions, wallet, lpOverview, strategyBr
           positions.positions.length > 0 ? (
             <div className="flex flex-col gap-2">
               {positions.positions.map((p) => (
-                <PositionCard key={p.position} position={p} onCommand={onCommand} />
+                <PositionCard key={p.position} position={p} onCommand={onCommand} screeningTimeframe={positions?.screening_config?.timeframe} screeningCategories={positions?.screening_config?.categories} />
               ))}
             </div>
           ) : (

@@ -368,8 +368,16 @@ function logExperimentLesson(experiment, outcome, improvementPct) {
 // ─── LLM Call ────────────────────────────────────────────────
 
 async function callLLM(model, sectionName, lossCount, currentText, failureDesc) {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new Error("OPENROUTER_API_KEY not set");
+  const PROVIDER_MAP = {
+    openrouter: { baseURL: "https://openrouter.ai/api/v1", apiKey: process.env.OPENROUTER_API_KEY },
+    deepseek:   { baseURL: "https://api.deepseek.com",      apiKey: process.env.DEEPSEEK_API_KEY },
+    minimax:    { baseURL: "https://api.minimax.io/v1",      apiKey: process.env.MINIMAX_API_KEY },
+    openai:     { baseURL: "https://api.openai.com/v1",      apiKey: process.env.OPENAI_API_KEY },
+  };
+  // Autoresearch uses the general provider by default
+  const prov = config.llm?.generalProvider || process.env.LLM_PROVIDER || "openrouter";
+  const cfg = PROVIDER_MAP[prov] || PROVIDER_MAP.openrouter;
+  if (!cfg.apiKey) throw new Error(`${prov.toUpperCase()} API key not set`);
 
   const systemMsg = `You optimize prompts for an autonomous LP (Liquidity Provider) trading agent on Meteora/Solana DLMM. The agent uses these prompts as behavioral instructions. Your goal is to make small, surgical edits that reduce losses.
 
@@ -399,10 +407,10 @@ HYPOTHESIS: [one sentence explaining what you're changing and why]
 MODIFIED_TEXT:
 [full section text with your single change applied]`;
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  const response = await fetch(`${cfg.baseURL}/chat/completions`, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${apiKey}`,
+      "Authorization": `Bearer ${cfg.apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({

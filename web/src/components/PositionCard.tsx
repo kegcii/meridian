@@ -23,7 +23,7 @@ function formatAge(minutes: number): string {
   return `${days}d ${hrs % 24}h`;
 }
 
-function PositionCardInner({ position, onCommand }: { position: PositionInfo; onCommand?: (text: string) => void }) {
+function PositionCardInner({ position, onCommand, screeningTimeframe, screeningCategories }: { position: PositionInfo; onCommand?: (text: string) => void; screeningTimeframe?: string; screeningCategories?: string[] }) {
   const { pair, pool, base_mint, in_range, pnl_pct, unclaimed_fees_sol, unclaimed_fees_usd, age_minutes, active_bin, lower_bin, upper_bin } = position;
   const [closing, setClosing] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
@@ -80,13 +80,27 @@ function PositionCardInner({ position, onCommand }: { position: PositionInfo; on
             )}
           </div>
         </div>
-        <Badge variant={in_range ? "outline" : "destructive"}>
-          {in_range ? "IN RANGE" : "OOR"}
-        </Badge>
+        <div className="flex flex-col items-end gap-1">
+          <Badge variant={in_range ? "outline" : "destructive"}>
+            {in_range ? "IN RANGE" : `OOR${position.oor_direction ? ` ${position.oor_direction}` : ""}`}
+          </Badge>
+          {!in_range && position.minutes_out_of_range != null && position.minutes_out_of_range > 0 && (
+            <span className="font-mono text-[9px] text-red-400/70">{position.minutes_out_of_range}m OOR</span>
+          )}
+          {in_range && age_minutes != null && (
+            <span className="font-mono text-[9px] text-emerald-300/50">in range {formatAge(age_minutes)}</span>
+          )}
+        </div>
       </div>
 
       {/* Stats */}
-      <div className="mb-2 flex items-center gap-3">
+      <div className="mb-2 flex flex-wrap items-center gap-3">
+        <div>
+          <span className="block text-[10px] text-ash">Value</span>
+          <span className="font-mono text-[11px] text-cream">
+            {position.total_value_sol != null ? `${position.total_value_sol.toFixed(4)} SOL` : position.total_value_usd != null ? `$${position.total_value_usd.toFixed(2)}` : "--"}
+          </span>
+        </div>
         <div>
           <span className="block text-[10px] text-ash">PnL</span>
           <span className={`font-mono text-[11px] font-medium ${pnlColor}`}>
@@ -107,7 +121,7 @@ function PositionCardInner({ position, onCommand }: { position: PositionInfo; on
         </div>
       </div>
 
-      {/* Extra metrics */}
+      {/* Pool metrics (live where available, fallback to deploy-time) */}
       <div className="mb-2 flex flex-wrap items-center gap-3 border-t border-white/6 pt-2">
         <div>
           <span className="block text-[10px] text-ash">Bin step</span>
@@ -118,14 +132,50 @@ function PositionCardInner({ position, onCommand }: { position: PositionInfo; on
           <span className="font-mono text-[11px] text-cream">{position.bin_step ? `${(position.bin_step / 100).toFixed(2)}%` : "--"}</span>
         </div>
         <div>
-          <span className="block text-[10px] text-ash">Volatility</span>
-          <span className="font-mono text-[11px] text-cream">{position.volatility != null ? position.volatility.toFixed(2) : "--"}</span>
+          <span className="block text-[10px] text-ash">Volatility {position.live_volatility != null ? "" : ""}</span>
+          <span className="font-mono text-[11px] text-cream">
+            {position.live_volatility != null ? position.live_volatility.toFixed(2) : (position.volatility != null ? position.volatility.toFixed(2) : "--")}
+            {position.live_volatility != null && <span className="ml-1 text-[8px] text-emerald-300/60">LIVE</span>}
+          </span>
         </div>
         <div>
           <span className="block text-[10px] text-ash">Fee/TVL</span>
-          <span className="font-mono text-[11px] text-cream">{position.fee_tvl_ratio != null ? `${position.fee_tvl_ratio.toFixed(2)}%` : "--"}</span>
+          <span className="font-mono text-[11px] text-cream">
+            {position.live_fee_tvl_ratio != null ? `${position.live_fee_tvl_ratio.toFixed(2)}%` : (position.fee_tvl_ratio != null ? `${position.fee_tvl_ratio.toFixed(2)}%` : "--")}
+            {position.live_fee_tvl_ratio != null && <span className="ml-1 text-[8px] text-emerald-300/60">LIVE</span>}
+          </span>
         </div>
+        <div>
+          <span className="block text-[10px] text-ash">Volume</span>
+          <span className="font-mono text-[11px] text-cream">
+            {position.live_volume != null ? `$${position.live_volume >= 1000 ? `${(position.live_volume / 1000).toFixed(1)}k` : position.live_volume.toFixed(0)}` : "--"}
+            {position.live_volume != null && <span className="ml-1 text-[8px] text-emerald-300/60">LIVE</span>}
+          </span>
+        </div>
+        {(screeningTimeframe || position.deploy_timeframe) && (
+          <div className="ml-auto flex flex-col items-end gap-0.5">
+            {position.deploy_timeframe && (
+              <span className="font-mono text-[8px] text-ash/36">deploy: {position.deploy_timeframe} · {(position.deploy_categories || []).join("+")}</span>
+            )}
+            <span className="font-mono text-[9px] text-ash/50">live: {screeningTimeframe || "?"} · {(screeningCategories || []).join("+")}</span>
+          </div>
+        )}
       </div>
+
+      {/* Smart wallets */}
+      {(position.smart_wallets_total ?? 0) > 0 && (
+        <div className="mb-2 flex items-center gap-2 border-t border-white/6 pt-2">
+          <span className="text-[10px] text-ash">Smart Wallets:</span>
+          <span className={`font-mono text-[11px] ${(position.smart_wallets_in_pool ?? 0) > 0 ? "text-emerald-300" : "text-ash/50"}`}>
+            {position.smart_wallets_in_pool ?? 0}/{position.smart_wallets_total ?? 0} in pool
+          </span>
+          {(position.smart_wallets_names?.length ?? 0) > 0 && (
+            <span className="text-[10px] text-amber-200/60">
+              ({position.smart_wallets_names!.join(", ")})
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Bin range chart */}
       {lower_bin != null && upper_bin != null && active_bin != null ? (
@@ -149,7 +199,10 @@ const PositionCard = memo(PositionCardInner, (prev, next) =>
   prev.position.pnl_pct === next.position.pnl_pct &&
   prev.position.in_range === next.position.in_range &&
   prev.position.unclaimed_fees_sol === next.position.unclaimed_fees_sol &&
-  prev.position.active_bin === next.position.active_bin
+  prev.position.active_bin === next.position.active_bin &&
+  prev.position.live_volatility === next.position.live_volatility &&
+  prev.position.live_volume === next.position.live_volume &&
+  prev.position.smart_wallets_in_pool === next.position.smart_wallets_in_pool
 );
 
 export default PositionCard;

@@ -19,16 +19,34 @@ import { studyTopLPers } from "./tools/study.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenHolders, getTokenNarrative, getTokenInfo } from "./tools/token.js";
 
-// Configurable LLM provider: "openrouter" (default) or "deepseek"
-const provider = process.env.LLM_PROVIDER || "openrouter";
-const client = new OpenAI({
-  baseURL: provider === "deepseek"
-    ? "https://api.deepseek.com"
-    : "https://openrouter.ai/api/v1",
-  apiKey: provider === "deepseek"
-    ? process.env.DEEPSEEK_API_KEY
-    : process.env.OPENROUTER_API_KEY,
-});
+// Configurable LLM providers — supports per-role routing
+// Set in .env:  LLM_PROVIDER=openrouter (global default)
+// Override per role in user-config.json:
+//   "screeningProvider": "minimax",  "managementProvider": "openrouter", etc.
+const PROVIDER_CONFIG = {
+  openrouter: { baseURL: "https://openrouter.ai/api/v1", apiKey: () => process.env.OPENROUTER_API_KEY },
+  deepseek:   { baseURL: "https://api.deepseek.com",      apiKey: () => process.env.DEEPSEEK_API_KEY },
+  minimax:    { baseURL: "https://api.minimax.io/v1",      apiKey: () => process.env.MINIMAX_API_KEY },
+  openai:     { baseURL: "https://api.openai.com/v1",      apiKey: () => process.env.OPENAI_API_KEY },
+};
+
+const _clientCache = {};
+function getClient(providerName) {
+  const name = providerName || process.env.LLM_PROVIDER || "openrouter";
+  if (_clientCache[name]) return _clientCache[name];
+  const cfg = PROVIDER_CONFIG[name] || PROVIDER_CONFIG.openrouter;
+  _clientCache[name] = new OpenAI({ baseURL: cfg.baseURL, apiKey: cfg.apiKey() });
+  return _clientCache[name];
+}
+
+function getRoleProvider(agentType) {
+  if (agentType === "SCREENER") return config.llm.screeningProvider || process.env.LLM_PROVIDER || "openrouter";
+  if (agentType === "MANAGER")  return config.llm.managementProvider || process.env.LLM_PROVIDER || "openrouter";
+  return config.llm.generalProvider || process.env.LLM_PROVIDER || "openrouter";
+}
+
+// Default client for backward compat
+const client = getClient();
 
 const DEFAULT_MODEL = process.env.LLM_MODEL || "openai/gpt-5.4-nano";
 const CODEX_SCREENING_SCHEMA_PATH = fileURLToPath(new URL("./tools/codex-screening-plan.schema.json", import.meta.url));
@@ -467,6 +485,7 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
     try {
       const activeModel = model || getRolePrimaryModel(agentType) || DEFAULT_MODEL;
       const fallbackModel = getRoleFallbackModel(agentType, activeModel);
+      const roleClient = getClient(getRoleProvider(agentType));
 
       // Retry up to 3 times on transient errors; optional configured fallback on 2nd failure
       const RETRYABLE = new Set([402, 408, 429, 502, 503, 504, 529]);
@@ -474,7 +493,7 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
       let usedModel = activeModel;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          response = await client.chat.completions.create({
+          response = await roleClient.chat.completions.create({
             model: usedModel,
             messages,
             tools,
@@ -639,10 +658,11 @@ export async function lightChat(goal, sessionHistory = [], model = null) {
   const primaryModel = model || getRolePrimaryModel("GENERAL") || DEFAULT_MODEL;
   const fallbackModel = getRoleFallbackModel("GENERAL", primaryModel);
   const modelsToTry = fallbackModel ? [primaryModel, fallbackModel] : [primaryModel];
+  const generalClient = getClient(getRoleProvider("GENERAL"));
 
   for (const tryModel of modelsToTry) {
     try {
-      const response = await client.chat.completions.create({
+      const response = await generalClient.chat.completions.create({
         model: tryModel,
         messages,
         temperature: config.llm.temperature,
