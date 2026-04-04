@@ -247,37 +247,20 @@ export async function deployPosition({
     throw new Error("Only 'bid_ask' or 'spot' strategies are allowed.");
   }
 
-  // ─── Hard guard: two-sided spot — only block on critical safety conditions ──
-  // Spot is now the DEFAULT strategy. Only hard-block on:
-  //   • Price dumping >25% in 1h (rug/panic risk)
-  //   • Proven negative spot history on this pool (3+ deploys, WR < 35%)
-  // Smart-wallet presence and LPer WR are logged as hints but do NOT block.
+  // ─── Guard: two-sided spot requires positive momentum ────────────────────────
+  // Spot strategy can be:
+  //   • one-sided (sol_split_pct=100): always allowed — SOL-only like bid_ask but spot distribution
+  //   • two-sided (sol_split_pct<100): requires positive momentum to justify token-side IL risk
+  //
+  // Two-sided hard blocks:
+  //   1. Price dumping >25% in 1h → downgrade to one-sided spot
+  //   2. Momentum flat/negative (change_1h < 1% AND change_5m < 2%) → downgrade to one-sided spot
+  //   3. Proven negative spot history (3+ deploys, WR < 35%) → downgrade to one-sided spot
   const isTwoSidedSpot = activeStrategy === "spot" && sol_split_pct != null && sol_split_pct < 100;
   if (isTwoSidedSpot) {
-    const warnings = [];
+    let downgradReason = null;
 
-    // Hint 1: Smart wallets on pool (informational only)
-    try {
-      const { checkSmartWalletsOnPool } = await import("../smart-wallets.js");
-      const swResult = await checkSmartWalletsOnPool({ pool_address });
-      const hasSmartWallets = swResult?.found?.length > 0;
-      if (!hasSmartWallets) warnings.push("no smart wallets on pool");
-    } catch { /* ignore */ }
-
-    // Hint 2: Top LPers win rate (informational only)
-    try {
-      const studyResult = await studyTopLPers({ pool_address, limit: 4 });
-      const credible = (studyResult?.lpers || []).filter(lp => lp.total_lp >= 3 && lp.win_rate >= 0.6 && lp.total_inflow >= 1000);
-      const avgWR = credible.length > 0 ? credible.reduce((s, lp) => s + lp.win_rate, 0) / credible.length : null;
-      if (avgWR !== null && avgWR < 0.70) warnings.push(`top LPers avg WR ${(avgWR*100).toFixed(0)}% (<70%)`);
-    } catch { /* ignore */ }
-
-    if (warnings.length > 0) {
-      log("deploy", `Spot hints (non-blocking): ${warnings.join(", ")}`);
-    }
-
-    // Hard block 1: price dumping >25% in 1h — rug/panic, too risky for two-sided
-    let momentumOk = true;
+    // Check momentum via OKX
     try {
       const { fetchOkxPriceInfo } = await import("../tools/okx.js");
       const resolvedMint = base_mint || (await (async () => {
@@ -287,42 +270,44 @@ export async function deployPosition({
       const okx = await fetchOkxPriceInfo(resolvedMint);
       if (okx) {
         const change1h = okx.change_1h || 0;
+        const change5m = okx.change_5m || 0;
         if (change1h < -25) {
-          momentumOk = false;
-        } else if (change1h > 5) {
-          log("deploy", `Momentum UP (+${change1h.toFixed(1)}% 1h) — two-sided spot encouraged`);
+          downgradReason = `price dumping ${change1h.toFixed(1)}% in 1h — rug/panic risk`;
+        } else if (change1h < 1 && change5m < 2) {
+          downgradReason = `momentum flat/negative (1h: ${change1h.toFixed(1)}%, 5m: ${change5m.toFixed(1)}%) — token-side IL not justified`;
+        } else {
+          log("deploy", `Momentum OK (1h: +${change1h.toFixed(1)}%, 5m: +${change5m.toFixed(1)}%) — two-sided spot approved`);
         }
       }
-    } catch { momentumOk = true; /* if OKX unavailable, don't block */ }
-    if (!momentumOk) {
-      log("deploy", `BLOCKED two-sided spot: price dumping >25% in 1h — rug/panic risk`);
+    } catch { /* if OKX unavailable, allow two-sided */ }
+
+    // Check negative spot history
+    if (!downgradReason) {
+      try {
+        const { getPoolMemory } = await import("../pool-memory.js");
+        const mem = getPoolMemory(pool_address);
+        if (mem && mem.deploys?.length > 0) {
+          const spotDeploys = mem.deploys.filter(d => d.strategy === "spot");
+          if (spotDeploys.length >= 3) {
+            const spotWins = spotDeploys.filter(d => (d.pnl_pct || 0) > 0);
+            const spotWR = spotWins.length / spotDeploys.length;
+            if (spotWR < 0.35) {
+              downgradReason = `negative spot history on this pool (WR ${(spotWR*100).toFixed(0)}% across ${spotDeploys.length} deploys)`;
+            }
+          }
+        }
+      } catch { /* default to pass */ }
+    }
+
+    if (downgradReason) {
+      log("deploy", `Two-sided spot downgraded to one-sided: ${downgradReason}`);
       return {
         success: false,
-        error: `Two-sided spot blocked — price dumping >25% in 1h (rug/panic risk). Use bid_ask instead.`,
+        error: `Two-sided spot not suitable — ${downgradReason}. Retry with spot one-sided (sol_split_pct=100) to keep spot distribution without token-side IL exposure.`,
       };
     }
 
-    // Hard block 2: proven negative spot history on this pool
-    try {
-      const { getPoolMemory } = await import("../pool-memory.js");
-      const mem = getPoolMemory(pool_address);
-      if (mem && mem.deploys?.length > 0) {
-        const spotDeploys = mem.deploys.filter(d => d.strategy === "spot");
-        if (spotDeploys.length >= 3) {
-          const spotWins = spotDeploys.filter(d => (d.pnl_pct || 0) > 0);
-          const spotWR = spotWins.length / spotDeploys.length;
-          if (spotWR < 0.35) {
-            log("deploy", `BLOCKED two-sided spot: negative pool history (WR ${(spotWR*100).toFixed(0)}% across ${spotDeploys.length} deploys)`);
-            return {
-              success: false,
-              error: `Two-sided spot blocked — this pool has negative spot history (WR ${(spotWR*100).toFixed(0)}% across ${spotDeploys.length} deploys). Use bid_ask instead.`,
-            };
-          }
-        }
-      }
-    } catch { /* default to pass */ }
-
-    log("deploy", `Two-sided spot approved${warnings.length > 0 ? ` (hints: ${warnings.join(", ")})` : ""}`);
+    log("deploy", `Two-sided spot approved`);
   }
 
   // ─── Hard guard: no duplicate pool/token deployments ────────────
