@@ -1216,16 +1216,23 @@ export async function getMyPositions({ force = false } = {}) {
         const { getPoolDetail } = await import("./screening.js");
         const { checkSmartWalletsOnPool } = await import("../smart-wallets.js");
 
-        const [poolResults, swResults] = await Promise.all([
-          Promise.allSettled(stale.map((pool) => getPoolDetail({ pool_address: pool, timeframe: config.screening.timeframe || "5m" }).catch(() => null))),
-          Promise.allSettled(stale.map((pool) => checkSmartWalletsOnPool({ pool_address: pool }).catch(() => null))),
-        ]);
+        // Fetch pool details in parallel (lightweight API calls)
+        const poolResults = await Promise.allSettled(
+          stale.map((pool) => getPoolDetail({ pool_address: pool, timeframe: config.screening.timeframe || "5m" }).catch(() => null))
+        );
+
+        // Serialize smart-wallet checks to avoid concurrent getProgramAccounts bursts (429s)
+        const swResults = [];
+        for (const pool of stale) {
+          const result = await checkSmartWalletsOnPool({ pool_address: pool }).catch(() => null);
+          swResults.push({ status: "fulfilled", value: result });
+        }
 
         stale.forEach((pool, i) => {
           _livePoolCache.set(pool, {
             ts: now,
             pool: poolResults[i].status === "fulfilled" ? poolResults[i].value : null,
-            sw: swResults[i].status === "fulfilled" ? swResults[i].value : null,
+            sw: swResults[i].value,
           });
         });
       }
