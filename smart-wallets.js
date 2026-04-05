@@ -51,9 +51,9 @@ export function listSmartWallets() {
   return { total: wallets.length, wallets };
 }
 
-// Cache wallet positions for 5 minutes to avoid hammering RPC
+// Cache wallet positions for 10 minutes to avoid hammering RPC
 const _cache = new Map(); // address -> { positions, fetchedAt }
-const CACHE_TTL = 5 * 60 * 1000;
+const CACHE_TTL = 10 * 60 * 1000;
 
 export async function checkSmartWalletsOnPool({ pool_address }) {
   const { wallets: allWallets } = loadWallets();
@@ -72,7 +72,7 @@ export async function checkSmartWalletsOnPool({ pool_address }) {
   const { getWalletPositions } = await import("./tools/dlmm.js");
 
   // Throttle to avoid hammering RPC with 100+ concurrent getProgramAccounts calls
-  async function fetchBatched(items, fn, batchSize = 2, delayMs = 300) {
+  async function fetchBatched(items, fn, batchSize = 2, delayMs = 500) {
     const results = [];
     for (let i = 0; i < items.length; i += batchSize) {
       const batch = items.slice(i, i + batchSize);

@@ -139,7 +139,7 @@ async function sendManagedTransaction(tx, signers, label) {
   await applyPriorityFee(tx, feePayer, label);
   let lastError = null;
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) {
     try {
       if (attempt > 0) {
         const { blockhash } = await getConnection().getLatestBlockhash("confirmed");
@@ -161,12 +161,11 @@ async function sendManagedTransaction(tx, signers, label) {
         /blockhash not found/i.test(message) ||
         /transaction expired/i.test(message);
 
-      if (!retryableExpiry || attempt === 2) {
+      if (!retryableExpiry || attempt === 4) {
         throw error;
       }
 
-      log("tx_retry", `${label}: ${message}; refreshing blockhash and retrying (${attempt + 2}/3)`);
-      await new Promise((r) => setTimeout(r, 2000));
+      log("tx_retry", `${label}: ${message}; refreshing blockhash and retrying (${attempt + 2}/5)`);
     }
   }
 
