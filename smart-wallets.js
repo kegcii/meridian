@@ -72,7 +72,7 @@ export async function checkSmartWalletsOnPool({ pool_address }) {
   const { getWalletPositions } = await import("./tools/dlmm.js");
 
   // Throttle to avoid hammering RPC with 100+ concurrent getProgramAccounts calls
-  async function fetchBatched(items, fn, batchSize = 5, delayMs = 150) {
+  async function fetchBatched(items, fn, batchSize = 2, delayMs = 300) {
     const results = [];
     for (let i = 0; i < items.length; i += batchSize) {
       const batch = items.slice(i, i + batchSize);

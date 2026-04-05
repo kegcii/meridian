@@ -166,6 +166,7 @@ async function sendManagedTransaction(tx, signers, label) {
       }
 
       log("tx_retry", `${label}: ${message}; refreshing blockhash and retrying (${attempt + 2}/3)`);
+      await new Promise((r) => setTimeout(r, 2000));
     }
   }
 
