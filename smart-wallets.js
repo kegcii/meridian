@@ -71,21 +71,31 @@ export async function checkSmartWalletsOnPool({ pool_address }) {
 
   const { getWalletPositions } = await import("./tools/dlmm.js");
 
-  const results = await Promise.all(
-    wallets.map(async (wallet) => {
-      try {
-        const cached = _cache.get(wallet.address);
-        if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
-          return { wallet, positions: cached.positions };
-        }
-        const { positions } = await getWalletPositions({ wallet_address: wallet.address });
-        _cache.set(wallet.address, { positions: positions || [], fetchedAt: Date.now() });
-        return { wallet, positions: positions || [] };
-      } catch {
-        return { wallet, positions: [] };
+  // Throttle to avoid hammering RPC with 100+ concurrent getProgramAccounts calls
+  async function fetchBatched(items, fn, batchSize = 5, delayMs = 150) {
+    const results = [];
+    for (let i = 0; i < items.length; i += batchSize) {
+      const batch = items.slice(i, i + batchSize);
+      const batchResults = await Promise.all(batch.map(fn));
+      results.push(...batchResults);
+      if (i + batchSize < items.length) await new Promise((r) => setTimeout(r, delayMs));
+    }
+    return results;
+  }
+
+  const results = await fetchBatched(wallets, async (wallet) => {
+    try {
+      const cached = _cache.get(wallet.address);
+      if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
+        return { wallet, positions: cached.positions };
       }
-    })
-  );
+      const { positions } = await getWalletPositions({ wallet_address: wallet.address });
+      _cache.set(wallet.address, { positions: positions || [], fetchedAt: Date.now() });
+      return { wallet, positions: positions || [] };
+    } catch {
+      return { wallet, positions: [] };
+    }
+  });
 
   const inPool = results
     .filter((r) => r.positions.some((p) => p.pool === pool_address))

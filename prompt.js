@@ -82,11 +82,21 @@ function _defaultRangeSelectionText(deployAmount, currentBalanceSol) {
 - ATH PROXIMITY OVERRIDE:
   If candidate shows ath >= ${config.screening.athTopThresholdPct ?? 90}% of all-time high, token is near peak with max downside risk.
   Override bid_ask range to 55-65% (extra downside buffer for likely retrace from ATH).
-- MOMENTUM CHECK (5m vs 1h price change):
-  * 1h positive + 5m negative → PUMP FADING: reversing. Use spot or skip.
-  * 1h negative + 5m flat/positive → STABILIZING: good bid_ask entry on sell pressure.
-  * 1h positive + 5m positive → STILL PUMPING: use spot — bid_ask SOL sits idle during pumps.
-  * Both flat → RANGING: safest bid_ask entry, use lower end of volatility band.
+- MOMENTUM CHECK — STRATEGY SELECTOR (CRITICAL — 60% of last 20 trades went OOR upside on bid_ask):
+  Check price change over 1h AND 5m BEFORE choosing strategy:
+  
+  🔴 MANDATORY SPOT (NOT bid_ask):
+  * 1h change > +1% → token is pumping, bid_ask will go OOR upside → DEPLOY SPOT with sol_split_pct=82-87
+  * 5m change > +3% → short-term momentum spike → DEPLOY SPOT
+  * volume/TVL > 1.5 → high trading pressure → DEPLOY SPOT
+  
+  🟢 BID_ASK ALLOWED:
+  * 1h change < +1% AND 5m change < +2% AND price is sideways/declining → bid_ask is safe
+  * NO positive momentum signals present → bid_ask OK
+  
+  ⚠️ HARD RULE: If ANY momentum indicator is positive, DO NOT use bid_ask. 
+  Historical data: 67% of bid_ask positions went OOR upside = ZERO fees earned during pump.
+  Bid_ask only works for catching dips or ranging markets.
 
 - OOR DIRECTION MATTERS — widening range only helps if OOR matches your liquidity direction:
   * bid_ask (SOL below active bin): range extends DOWNWARD only. Cannot fix upside OOR.
