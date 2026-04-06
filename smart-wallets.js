@@ -54,25 +54,33 @@ export function listSmartWallets() {
 // Cache wallet positions for 5 minutes to avoid hammering RPC
 const _cache = new Map(); // address -> { positions, fetchedAt }
 const CACHE_TTL = 5 * 60 * 1000;
+const BATCH_SIZE = 8;
+const BATCH_DELAY_MS = 300;
+
+async function fetchInBatches(wallets, fetchFn) {
+  const results = [];
+  for (let i = 0; i < wallets.length; i += BATCH_SIZE) {
+    const batch = wallets.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.all(batch.map(fetchFn));
+    results.push(...batchResults);
+    if (i + BATCH_SIZE < wallets.length) {
+      await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+    }
+  }
+  return results;
+}
 
 export async function checkSmartWalletsOnPool({ pool_address }) {
   const { wallets: allWallets } = loadWallets();
   // Only check LP-type wallets — holder wallets don't have positions
   const wallets = allWallets.filter((w) => !w.type || w.type === "lp");
-  if (wallets.length === 0) {
-    return {
-      pool: pool_address,
-      tracked_wallets: 0,
-      in_pool: [],
-      confidence_boost: false,
-      signal: "No smart wallets tracked yet — neutral signal",
-    };
-  }
 
-  const { getWalletPositions } = await import("./tools/dlmm.js");
+  // ── Source 1: Saved smart wallets (fast, cached) ──
+  let inPool = [];
+  if (wallets.length > 0) {
+    const { getWalletPositions } = await import("./tools/dlmm.js");
 
-  const results = await Promise.all(
-    wallets.map(async (wallet) => {
+    const results = await fetchInBatches(wallets, async (wallet) => {
       try {
         const cached = _cache.get(wallet.address);
         if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
@@ -84,20 +92,30 @@ export async function checkSmartWalletsOnPool({ pool_address }) {
       } catch {
         return { wallet, positions: [] };
       }
-    })
-  );
+    });
 
-  const inPool = results
-    .filter((r) => r.positions.some((p) => p.pool === pool_address))
-    .map((r) => ({ name: r.wallet.name, category: r.wallet.category, address: r.wallet.address }));
+    inPool = results
+      .filter((r) => r.positions.some((p) => p.pool === pool_address))
+      .map((r) => ({ name: r.wallet.name, category: r.wallet.category, address: r.wallet.address, source: "saved" }));
+  }
+
+  const allFound = [...inPool];
+  const totalTracked = wallets.length;
+
+  let signal;
+  if (allFound.length > 0) {
+    signal = `${inPool.length} tracked wallet(s): ${inPool.map((w) => w.name).join(", ")} — STRONG signal`;
+  } else if (totalTracked === 0) {
+    signal = "No smart wallets tracked — neutral signal";
+  } else {
+    signal = `0/${totalTracked} tracked wallets in pool — neutral, rely on fundamentals`;
+  }
 
   return {
     pool: pool_address,
-    tracked_wallets: wallets.length,
-    in_pool: inPool,
-    confidence_boost: inPool.length > 0,
-    signal: inPool.length > 0
-      ? `${inPool.length}/${wallets.length} smart wallet(s) are in this pool: ${inPool.map((w) => w.name).join(", ")} — STRONG signal`
-      : `0/${wallets.length} smart wallets in this pool — neutral, rely on fundamentals`,
+    tracked_wallets: totalTracked,
+    in_pool: allFound,
+    confidence_boost: allFound.length > 0,
+    signal,
   };
 }

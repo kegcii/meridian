@@ -1057,12 +1057,14 @@ export function getPerformanceHistory({ hours = 24, limit = 50 } = {}) {
       pool_name: r.pool_name,
       pool: r.pool,
       strategy: r.strategy,
+      bin_step: r.bin_step ?? null,
       pnl_usd: r.pnl_usd,
       pnl_pct: r.pnl_pct,
       fees_earned_usd: r.fees_earned_usd,
       range_efficiency: r.range_efficiency,
       minutes_held: r.minutes_held,
       close_reason: r.close_reason,
+      deployed_at: r.deployed_at ?? null,
       closed_at: r.recorded_at,
     }));
 
@@ -1091,6 +1093,42 @@ export function getPerformanceSummary() {
   const avgPnlPct = p.reduce((s, x) => s + x.pnl_pct, 0) / p.length;
   const avgRangeEfficiency = p.reduce((s, x) => s + x.range_efficiency, 0) / p.length;
   const wins = p.filter((x) => x.pnl_usd > 0).length;
+  const avgHoldMin = p.reduce((s, x) => s + (x.minutes_held || 0), 0) / p.length;
+
+  // Strategy breakdown
+  function stratStats(items) {
+    if (!items.length) return null;
+    const w = items.filter((x) => x.pnl_usd > 0).length;
+    const totPnl = items.reduce((s, x) => s + x.pnl_usd, 0);
+    const avgPnl = items.reduce((s, x) => s + x.pnl_pct, 0) / items.length;
+    const avgHold = items.reduce((s, x) => s + (x.minutes_held || 0), 0) / items.length;
+    return {
+      count: items.length,
+      win_rate_pct: Math.round((w / items.length) * 100),
+      avg_pnl_pct: Math.round(avgPnl * 100) / 100,
+      total_pnl_usd: Math.round(totPnl * 100) / 100,
+      avg_hold_min: Math.round(avgHold),
+    };
+  }
+
+  const bidAsk = p.filter((x) => (x.strategy || "bid_ask") === "bid_ask");
+  const spot   = p.filter((x) => x.strategy === "spot");
+
+  // Recent closes (last 20)
+  const recentCloses = [...p]
+    .sort((a, b) => new Date(b.deployed_at || 0) - new Date(a.deployed_at || 0))
+    .slice(0, 20)
+    .map((x) => ({
+      pair: x.pool_name || x.pool?.slice(0, 8) || "--",
+      pnl_pct: Math.round((x.pnl_pct || 0) * 100) / 100,
+      pnl_usd: Math.round((x.pnl_usd || 0) * 100) / 100,
+      strategy: x.strategy || "bid_ask",
+      bin_step: x.bin_step || null,
+      amount_sol: x.amount_sol || null,
+      minutes_held: x.minutes_held || null,
+      close_reason: x.close_reason || null,
+      deployed_at: x.deployed_at || null,
+    }));
 
   return {
     total_positions_closed: p.length,
@@ -1098,6 +1136,12 @@ export function getPerformanceSummary() {
     avg_pnl_pct: Math.round(avgPnlPct * 100) / 100,
     avg_range_efficiency_pct: Math.round(avgRangeEfficiency * 10) / 10,
     win_rate_pct: Math.round((wins / p.length) * 100),
+    avg_hold_min: Math.round(avgHoldMin),
     total_lessons: data.lessons.length,
+    by_strategy: {
+      bid_ask: stratStats(bidAsk),
+      spot: stratStats(spot),
+    },
+    recent_closes: recentCloses,
   };
 }

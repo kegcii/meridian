@@ -5,20 +5,96 @@ import { SUGGESTIONS } from "@/lib/commands";
 import { Button } from "@/components/ui/button";
 // ScrollArea replaced with native overflow-y-auto div for reliable scrolling
 
-function stripHtml(text: string): string {
-  return text
+function htmlToText(html: string): string {
+  return html
     .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/?b>/gi, "")
-    .replace(/<\/?i>/gi, "")
-    .replace(/<\/?em>/gi, "")
-    .replace(/<\/?strong>/gi, "")
-    .replace(/<\/?code>/gi, "`")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "• ")
     .replace(/<[^>]*>/g, "")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+    .replace(/&#39;/g, "'")
+    .trim();
+}
+
+function isHtml(text: string): boolean {
+  return /<[a-z][\s\S]*>/i.test(text);
+}
+
+/** Render a segment of text as inline markdown (bold, italic, code). */
+function renderInline(text: string, key: string | number): React.ReactNode {
+  // Split on **bold**, *italic*, `code`
+  const parts: React.ReactNode[] = [];
+  const re = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let i = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    if (m[2]) parts.push(<strong key={`${key}-b${i}`} className="font-semibold text-cream">{m[2]}</strong>);
+    else if (m[3]) parts.push(<em key={`${key}-i${i}`} className="italic">{m[3]}</em>);
+    else if (m[4]) parts.push(<code key={`${key}-c${i}`} className="rounded bg-white/10 px-1 py-0.5 font-mono text-[11px] text-amber-200">{m[4]}</code>);
+    last = m.index + m[0].length;
+    i++;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
+function MarkdownMessage({ content }: { content: string }) {
+  const raw = isHtml(content) ? htmlToText(content) : content;
+  const lines = raw.split("\n");
+  const nodes: React.ReactNode[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    // Heading
+    const hm = line.match(/^(#{1,3})\s+(.+)/);
+    if (hm) {
+      const level = hm[1].length;
+      const cls = level === 1 ? "text-base font-semibold text-cream mt-2 mb-0.5"
+        : level === 2 ? "text-sm font-semibold text-amber-200 mt-2 mb-0.5"
+        : "text-xs font-semibold text-cream/80 mt-1.5";
+      nodes.push(<div key={i} className={cls}>{renderInline(hm[2], i)}</div>);
+      i++; continue;
+    }
+    // Bullet list item
+    if (/^[-*•]\s+/.test(line)) {
+      const items: React.ReactNode[] = [];
+      while (i < lines.length && /^[-*•]\s+/.test(lines[i])) {
+        items.push(<li key={i}>{renderInline(lines[i].replace(/^[-*•]\s+/, ""), i)}</li>);
+        i++;
+      }
+      nodes.push(<ul key={`ul-${i}`} className="my-1 ml-3 list-none space-y-0.5 text-cream/88">{items}</ul>);
+      continue;
+    }
+    // Numbered list
+    if (/^\d+\.\s+/.test(line)) {
+      const items: React.ReactNode[] = [];
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+        items.push(<li key={i}>{renderInline(lines[i].replace(/^\d+\.\s+/, ""), i)}</li>);
+        i++;
+      }
+      nodes.push(<ol key={`ol-${i}`} className="my-1 ml-4 list-decimal space-y-0.5 text-cream/88">{items}</ol>);
+      continue;
+    }
+    // Blank line
+    if (line.trim() === "") { nodes.push(<div key={i} className="h-2" />); i++; continue; }
+    // Normal paragraph
+    nodes.push(<p key={i} className="leading-relaxed text-cream/90">{renderInline(line, i)}</p>);
+    i++;
+  }
+  return <div className="space-y-0.5 text-sm">{nodes}</div>;
+}
+
+function formatTs(ts: string | undefined): string {
+  if (!ts) return "";
+  try {
+    return new Date(ts).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Jakarta" });
+  } catch { return ""; }
 }
 
 interface ChatPanelProps {
@@ -205,16 +281,21 @@ export default function ChatPanel({
           )}
 
           {messages.map((msg, i) => (
-            <div key={i} className={`flex animate-fade-in-up ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+            <div key={i} className={`flex animate-fade-in-up flex-col gap-0.5 ${msg.role === "user" ? "items-end" : "items-start"}`}>
               <div
-                className={`max-w-[80%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm shadow-[0_14px_30px_rgba(0,0,0,0.18)] ${
+                className={`max-w-[80%] rounded-2xl px-4 py-3 shadow-[0_14px_30px_rgba(0,0,0,0.18)] ${
                   msg.role === "user"
-                    ? "border border-steel/30 bg-steel/14 text-cream"
-                    : "border border-white/8 bg-[linear-gradient(180deg,rgba(18,69,89,0.42),rgba(7,36,46,0.72))] text-cream/92"
+                    ? "border border-steel/30 bg-steel/14 text-cream text-sm whitespace-pre-wrap"
+                    : "border border-white/8 bg-[linear-gradient(180deg,rgba(18,69,89,0.42),rgba(7,36,46,0.72))]"
                 }`}
               >
-                {msg.role === "assistant" ? stripHtml(msg.content) : msg.content}
+                {msg.role === "assistant"
+                  ? <MarkdownMessage content={msg.content} />
+                  : msg.content}
               </div>
+              {msg.ts && (
+                <span className="px-1 font-mono text-[9px] text-ash/35">{formatTs(msg.ts)}</span>
+              )}
             </div>
           ))}
 

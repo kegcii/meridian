@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head><title>Fabriq Bookmarklet Setup</title></head>
+<body style="font-family:monospace;max-width:700px;margin:40px auto;padding:0 20px;background:#111;color:#eee">
+<h2>Fabriq &rarr; Meridian Bookmarklet</h2>
+<p>Drag this link to your bookmark bar:</p>
+
+<p style="padding:16px;background:#222;border-radius:8px;text-align:center">
+<a id="bm" style="font-size:18px;color:#fc4e04;text-decoration:none;padding:8px 16px;border:2px solid #fc4e04;border-radius:4px" href="#">Loading...</a>
+</p>
+
+<h3>Usage</h3>
+<ol>
+<li>Open <a href="https://fabriq.trade/trending" target="_blank" style="color:#fc4e04">fabriq.trade/trending</a></li>
+<li>Wait for pools to load</li>
+<li>Click the bookmarklet in your bookmark bar</li>
+<li>Data is sent to your Meridian server (localhost:3737)</li>
+</ol>
+
+<h3>Or paste this in Console</h3>
+<pre id="code" style="background:#1a1a1a;padding:12px;border-radius:4px;overflow-x:auto;font-size:12px;white-space:pre-wrap;word-break:break-all"></pre>
+
+<h3>Port</h3>
+<p>Port auto-detected from URL: <code id="portInfo"></code>. If Meridian runs on a different port, edit the <code>PORT</code> variable in the script.</p>
+
+<script>
+// Detect port from the page URL if served from Meridian, otherwise default 3636
+var port = location.port || '3636';
+var code = `(function(){var PORT=${port};var cells=Array.from(document.querySelectorAll('table tbody tr td')).map(function(c){return c.innerText.trim()});if(cells.length===0){alert('No Fabriq data found. Are you on fabriq.trade/trending?');return}var cols=19;var rows=[];for(var i=0;i<cells.length;i+=cols){rows.push(cells.slice(i,i+cols))}fetch('http://localhost:'+PORT+'/api/fabriq-import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:rows})}).then(function(r){return r.json()}).then(function(d){alert('Meridian: imported '+d.imported+' pools from Fabriq!')}).catch(function(e){alert('Failed to send to Meridian (port '+PORT+'): '+e.message)})})()`;
+
+document.getElementById('bm').href = 'javascript:' + encodeURIComponent(code);
+document.getElementById('bm').textContent = 'Fabriq -> Meridian';
+document.getElementById('code').textContent = code;
+document.getElementById('portInfo').textContent = port;
+</script>
+</body>
+</html>

@@ -7,11 +7,19 @@ import { getKey, fetchWithRetry } from "../lpagent-keys.js";
 
 const LPAGENT_API = "https://api.lpagent.io/open-api/v1";
 
+// Cache study results per pool — avoids hammering LP Agent API on repeated calls
+const _studyCache = new Map(); // pool_address → { result, cachedAt }
+const STUDY_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 /**
  * Fetch top LPers for a pool, filter to credible performers,
  * and return condensed behaviour patterns for LLM consumption.
  */
 export async function studyTopLPers({ pool_address, limit = 4 }) {
+  const cached = _studyCache.get(pool_address);
+  if (cached && Date.now() - cached.cachedAt < STUDY_CACHE_TTL_MS) {
+    return cached.result;
+  }
   const apiKey = await getKey();
   if (!apiKey) {
     return { pool: pool_address, message: "LPAGENT_API_KEY not set in .env — study_top_lpers is disabled.", patterns: [], lpers: [] };
@@ -200,11 +208,13 @@ export async function studyTopLPers({ pool_address, limit = 4 }) {
     patterns.range_note = "Historical ranges are informational only — size YOUR range from the volatility table, not these numbers. Market conditions (mcap, volume, volatility) may have changed significantly since these positions were opened.";
   }
 
-  return {
+  const result = {
     pool: pool_address,
     patterns,
     lpers: historicalSamples,
   };
+  _studyCache.set(pool_address, { result, cachedAt: Date.now() });
+  return result;
 }
 
 // ─── Pool Info (deep intel) ─────────────────────────────────

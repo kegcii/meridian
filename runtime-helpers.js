@@ -39,6 +39,8 @@ export const CONFIG_KEY_MAP = {
   screeningModel: ["llm", "screeningModel"],
   generalModel: ["llm", "generalModel"],
   binsBelow: ["strategy", "binsBelow"],
+  temperature: ["llm", "temperature"],
+  maxSteps: ["llm", "maxSteps"],
 };
 
 export function calculateBinsForPriceRange(binStep, priceRangePct) {

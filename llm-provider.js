@@ -13,6 +13,8 @@ export function getLlmProvider() {
 export function getDefaultModelForProvider(provider = getLlmProvider()) {
   if (provider === "codex") return "gpt-4o";
   if (provider === "claude") return "sonnet";
+  if (provider === "minimax") return "MiniMax-Text-01";
+  if (provider === "deepseek") return "deepseek-chat";
   return "openai/gpt-5.4-nano";
 }
 
@@ -45,6 +47,8 @@ export function getProviderApiKey(provider = getLlmProvider()) {
     throw new Error("Claude provider uses the Claude CLI (OAuth), not direct API key access.");
   }
   if (provider === "deepseek") return process.env.DEEPSEEK_API_KEY;
+  if (provider === "minimax") return process.env.MINIMAX_API_KEY;
+  if (provider === "openai") return process.env.OPENAI_API_KEY;
   return process.env.OPENROUTER_API_KEY;
 }
 
@@ -63,6 +67,20 @@ export function getProviderClientConfig(provider = getLlmProvider()) {
     };
   }
 
+  if (provider === "minimax") {
+    return {
+      baseURL: "https://api.minimaxi.chat/v1",
+      apiKey: getProviderApiKey(provider),
+    };
+  }
+
+  if (provider === "openai") {
+    return {
+      baseURL: "https://api.openai.com/v1",
+      apiKey: getProviderApiKey(provider),
+    };
+  }
+
   return {
     baseURL: "https://openrouter.ai/api/v1",
     apiKey: getProviderApiKey(provider),
@@ -77,7 +95,27 @@ export function getChatCompletionsEndpoint(provider = getLlmProvider()) {
     throw new Error("Claude provider uses the Claude CLI (OAuth), not direct chat completions.");
   }
   if (provider === "deepseek") return "https://api.deepseek.com/chat/completions";
+  if (provider === "minimax") return "https://api.minimaxi.chat/v1/chat/completions";
+  if (provider === "openai") return "https://api.openai.com/v1/chat/completions";
   return "https://openrouter.ai/api/v1/chat/completions";
+}
+
+/**
+ * Infer the LLM provider from a model name.
+ * Returns null if the model doesn't match a known pattern
+ * (caller should fall back to the global LLM_PROVIDER).
+ */
+export function inferProviderFromModel(model) {
+  if (!model) return null;
+  const m = model.toLowerCase();
+
+  if (m === "sonnet" || m === "opus" || m === "haiku" || m.startsWith("claude")) return "claude";
+  if (m.startsWith("codex") || m.startsWith("gpt") || m.startsWith("o1") || m.startsWith("o3") || m.startsWith("o4")) return "codex";
+  if (m.startsWith("deepseek")) return "deepseek";
+  if (m.startsWith("minimax") || m.startsWith("abab")) return "minimax";
+  if (m.includes("/")) return "openrouter";
+
+  return null;
 }
 
 export function createLlmClient(provider = getLlmProvider()) {

@@ -95,7 +95,7 @@ function fmtPct(value: number | null | undefined) {
 function fmtTimestamp(value: string | null | undefined) {
   if (!value) return "--";
   const ts = new Date(value);
-  return Number.isNaN(ts.getTime()) ? value : ts.toLocaleString();
+  return Number.isNaN(ts.getTime()) ? value : ts.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Jakarta" }) + " WIB";
 }
 
 function directionLabel(direction: string) {

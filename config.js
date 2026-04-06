@@ -12,8 +12,9 @@ const u = fs.existsSync(USER_CONFIG_PATH)
   : {};
 
 // Apply wallet/RPC from user-config if not already in env
-if (u.rpcUrl)    process.env.RPC_URL            ||= u.rpcUrl;
-if (u.walletKey) process.env.WALLET_PRIVATE_KEY ||= u.walletKey;
+if (u.rpcUrl)         process.env.RPC_URL            ||= u.rpcUrl;
+if (u.rpcFallbackUrl) process.env.RPC_FALLBACK_URL   ||= u.rpcFallbackUrl;
+if (u.walletKey)      process.env.WALLET_PRIVATE_KEY ||= u.walletKey;
 if (u.llmProvider) process.env.LLM_PROVIDER     ||= u.llmProvider;
 if (u.llmModel)  process.env.LLM_MODEL          ||= u.llmModel;
 if (u.dryRun !== undefined) process.env.DRY_RUN ||= String(u.dryRun);
@@ -171,7 +172,6 @@ const SECTION_MAP = {
   llm: new Set(Object.keys(config.llm)),
   memory: new Set(Object.keys(config.memory)),
   knowledgeBase: new Set(Object.keys(config.knowledgeBase)),
-  research: config.research ? new Set(Object.keys(config.research)) : new Set(),
 };
 
 // Keys that no caller may change

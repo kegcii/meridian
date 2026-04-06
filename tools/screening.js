@@ -81,6 +81,8 @@ export async function discoverPools({
  */
 export async function getTopCandidates({ limit = 10 } = {}) {
   const { config } = await import("../config.js");
+  const s = config.screening;
+  // ── Source 1: Meteora Pool Discovery API ──
   const { pools } = await discoverPools({ page_size: 50 });
 
   // Exclude pools where the wallet already has an open position
@@ -89,14 +91,50 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const occupiedPools = new Set(positions.map((p) => p.pool));
   const occupiedMints = new Set(positions.map((p) => p.base_mint).filter(Boolean));
 
-  const eligible = pools
+  let eligible = pools
     .filter((p) => !occupiedPools.has(p.pool) && !occupiedMints.has(p.base?.mint))
-    .slice(0, limit);
+    .filter((p) => {
+      // Post-filter: reject pools with missing critical data or low volume
+      // Meteora API sometimes returns ghost pools with no TVL/volume/bin_step
+      const vol = p.volume ?? 0;
+      const tvl = p.active_tvl ?? 0;
+      const bs = p.bin_step;
+      if (bs == null) return false;
+      if (tvl <= 0) return false;
+      if (vol < s.minVolume) return false;
+      return true;
+    });
+
+  let totalScreened = pools.length;
+
+  // ── Source 2: Fabriq Trending (browser-imported cache) ──
+  let fabriqCount = 0;
+  try {
+    const { getFabriqCandidates } = await import("./fabriq.js");
+    const fabriqPools = await getFabriqCandidates();
+    const existingPools = new Set(eligible.map((p) => p.pool));
+    const existingMints = new Set(eligible.map((p) => p.base?.mint).filter(Boolean));
+    for (const fp of fabriqPools) {
+      if (existingPools.has(fp.pool) || existingMints.has(fp.base?.mint)) continue;
+      if (occupiedPools.has(fp.pool) || occupiedMints.has(fp.base?.mint)) continue;
+      eligible.push(fp);
+      existingPools.add(fp.pool);
+      existingMints.add(fp.base?.mint);
+      fabriqCount++;
+    }
+    totalScreened += fabriqPools.length;
+    if (fabriqCount > 0) log("fabriq", `Added ${fabriqCount} new candidate(s) from Fabriq trending`);
+  } catch (e) {
+    log("fabriq", `Fabriq discovery error: ${e.message}`);
+  }
+
+  eligible = eligible.slice(0, limit);
 
   return {
     candidates: eligible.map(normalizeCandidateForUi),
     total_eligible: eligible.length,
-    total_screened: pools.length,
+    total_screened: totalScreened,
+    fabriq_candidates: fabriqCount,
   };
 }
 

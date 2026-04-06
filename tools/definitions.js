@@ -240,6 +240,23 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
     }
   },
 
+  {
+    type: "function",
+    function: {
+      name: "calculate_bins",
+      description: "Convert between bin count and price range percentage for DLMM positions. Useful for planning bin ranges before deploying. Provide price_range_pct to get bin count, or bin_count to get range %.",
+      parameters: {
+        type: "object",
+        properties: {
+          bin_step: { type: "integer", description: "Pool bin step (e.g. 80, 100, 200). Required." },
+          price_range_pct: { type: "number", description: "Target price range in % (e.g. 50 for 50%). Returns how many bins are needed." },
+          bin_count: { type: "number", description: "Number of bins. Returns what price range % that covers." }
+        },
+        required: ["bin_step"]
+      }
+    }
+  },
+
   // ═══════════════════════════════════════════
   //  POSITION MANAGEMENT TOOLS
   // ═══════════════════════════════════════════
@@ -693,6 +710,24 @@ Modes:
   {
     type: "function",
     function: {
+      name: "remove_lesson",
+      description: `Remove a single lesson by its ID. Use when the user asks to delete a specific lesson (e.g. after listing lessons with list_lessons).`,
+      parameters: {
+        type: "object",
+        properties: {
+          id: {
+            type: "string",
+            description: "The lesson ID to remove."
+          }
+        },
+        required: ["id"]
+      }
+    }
+  },
+
+  {
+    type: "function",
+    function: {
       name: "set_position_note",
       description: `Save a persistent instruction for a position that ALL future management cycles will respect.
 Use this immediately whenever the user gives a specific instruction about a position:
@@ -716,6 +751,30 @@ Pass null or empty string to clear an existing instruction.`,
           }
         },
         required: ["position_address", "instruction"]
+      }
+    }
+  },
+
+  {
+    type: "function",
+    function: {
+      name: "record_rebalance",
+      description: `Record that a position was rebalanced (closed and redeployed into a new position).
+Call this AFTER you have successfully closed an old position and deployed a new one as a rebalance.
+This links the two positions in state so rebalance history is tracked.`,
+      parameters: {
+        type: "object",
+        properties: {
+          old_position: {
+            type: "string",
+            description: "The address of the old position that was closed"
+          },
+          new_position: {
+            type: "string",
+            description: "The address of the new position that was deployed"
+          }
+        },
+        required: ["old_position", "new_position"]
       }
     }
   },

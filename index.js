@@ -12,7 +12,7 @@ import { config, reloadScreeningThresholds, computeDeployAmount } from "./config
 import { evolveThresholds, getPerformanceSummary, deduplicateLessons } from "./lessons.js";
 import { registerCronRestarter } from "./tools/executor.js";
 import { startPolling, stopPolling, sendMessage, isEnabled as telegramEnabled } from "./telegram.js";
-import { generateBriefing } from "./briefing.js";
+import { generateBriefing, formatBriefingText } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { initMemory, recallForScreening, recallForManagement, rememberPositionSnapshot, maybePromote, checkCapacity } from "./memory.js";
@@ -35,6 +35,7 @@ import { startServer } from "./server.js";
 import { getScreeningThresholdSummary, getStartupMode } from "./runtime-helpers.js";
 import { getRangeSelectionText } from "./prompt.js";
 import { shouldFileObservations, getKbStats, migrateFromJson, kbRecallForScreening, kbRecallForManagement, fileScreeningResult } from "./knowledge-base.js";
+
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
@@ -60,8 +61,6 @@ if (config.knowledgeBase?.enabled) {
   }
 }
 
-const TP_PCT  = config.management.takeProfitFeePct;
-const DEPLOY  = config.management.deployAmountSol;
 
 // ═══════════════════════════════════════════
 //  CYCLE TIMERS
@@ -104,7 +103,7 @@ async function runBriefing() {
   try {
     deduplicateLessons();
     const briefing = await generateBriefing();
-    emit("briefing", { html: briefing });
+    emit("briefing", briefing);
     setLastBriefingDate();
   } catch (error) {
     log("cron_error", `Morning briefing failed: ${error.message}`);
@@ -572,7 +571,7 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
       const { content } = await screenerLoop(`
 SCREENING CYCLE — DEPLOY ONLY${memoryHints}${signalWeightsBlock}${kbScreenContext}${candidateBlocks}${okxSignalGuide}
 ${strategyBlock}
-${candidateBlocks ? `The candidates above are PRE-LOADED with smart wallet, holder, narrative, memory, and OKX signal data.
+${candidateBlocks ? `The candidates above are PRE-LOADED with smart wallet, holder, narrative, memory, and OKX data.
 Evaluate them directly — no need to call get_top_candidates, check_smart_wallets_on_pool, get_token_holders, or get_token_narrative again.
 HARD SKIP rules still apply:
 - global_fees_sol < ${config.screening.minTokenFeesSol} SOL → skip (bundled/scam)
@@ -783,7 +782,13 @@ if (runtimeMode.interactive) {
     const total_screened = screenResult.total_screened ?? 0;
     startupCandidates = candidates;
 
+    const positionsValueSol = positions.positions.reduce((s, p) => s + (p.total_value_sol ?? 0), 0);
+    const positionsValueUsd = positions.positions.reduce((s, p) => s + (p.total_value_usd ?? 0), 0);
+    const totalSol = Math.round((wallet.sol + positionsValueSol) * 1e6) / 1e6;
+    const totalUsd = Math.round((wallet.sol_usd + positionsValueUsd) * 100) / 100;
     console.log(`Wallet:    ${wallet.sol} SOL  ($${wallet.sol_usd})  |  SOL price: $${wallet.sol_price}`);
+    console.log(`In positions: ${positionsValueSol.toFixed(4)} SOL  ($${positionsValueUsd.toFixed(2)})`);
+    console.log(`Total:     ${totalSol} SOL  ($${totalUsd})`);
     console.log(`Positions: ${positions.total_positions} open\n`);
 
     if (positions.total_positions > 0) {
@@ -821,7 +826,7 @@ if (runtimeMode.interactive) {
     if (text === "/briefing") {
       try {
         const briefing = await generateBriefing();
-        emit("briefing", { html: briefing });
+        emit("briefing", briefing);
       } catch (e) {
         await sendMessage(`Error: ${e.message}`).catch(() => {});
       }
@@ -911,7 +916,13 @@ Commands:
       await runBusy(async () => {
         const [wallet, positions] = await Promise.all([getWalletBalances(), getMyPositions()]);
         const unit = config.management.pnlUnit || "sol";
+        const posValueSol = positions.positions.reduce((s, p) => s + (p.total_value_sol ?? 0), 0);
+        const posValueUsd = positions.positions.reduce((s, p) => s + (p.total_value_usd ?? 0), 0);
+        const totSol = Math.round((wallet.sol + posValueSol) * 1e6) / 1e6;
+        const totUsd = Math.round((wallet.sol_usd + posValueUsd) * 100) / 100;
         console.log(`\nWallet: ${wallet.sol} SOL  ($${wallet.sol_usd})`);
+        console.log(`In positions: ${posValueSol.toFixed(4)} SOL  ($${posValueUsd.toFixed(2)})`);
+        console.log(`Total: ${totSol} SOL  ($${totUsd})`);
         console.log(`Positions: ${positions.total_positions}`);
         for (const p of positions.positions) {
           const status = p.in_range ? "in-range ✓" : "OUT OF RANGE ⚠";
@@ -927,7 +938,7 @@ Commands:
     if (input === "/briefing") {
       await runBusy(async () => {
         const briefing = await generateBriefing();
-        console.log(`\n${briefing.replace(/<[^>]*>/g, "")}\n`);
+        console.log(`\n${formatBriefingText(briefing)}\n`);
       });
       return;
     }

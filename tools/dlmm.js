@@ -46,11 +46,58 @@ async function getDLMM() {
 let _connection = null;
 let _wallet = null;
 
+// ─── RPC Failover (Helius → Alchemy) ─────────────────────────
+let _usingFallback = false;
+let _fallbackUntil = 0;
+const RPC_FALLBACK_COOLDOWN_MS = 60_000; // stay on fallback for 1 min
+
+function _primaryRpcUrl()  { return process.env.RPC_URL; }
+function _fallbackRpcUrl() { return process.env.RPC_FALLBACK_URL || process.env.ALCHEMY_RPC_URL || null; }
+
 function getConnection() {
+  const now = Date.now();
+  const fallbackUrl = _fallbackRpcUrl();
+
+  // If we switched to fallback but cooldown expired, try primary again
+  if (_usingFallback && now > _fallbackUntil) {
+    _usingFallback = false;
+    _connection = null;
+  }
+
   if (!_connection) {
-    _connection = new Connection(process.env.RPC_URL, "confirmed");
+    const url = (_usingFallback && fallbackUrl) ? fallbackUrl : _primaryRpcUrl();
+    _connection = new Connection(url, "confirmed");
   }
   return _connection;
+}
+
+/**
+ * Call after catching a 429 from the RPC. Switches to fallback if available.
+ */
+function switchToFallbackRpc() {
+  const fallbackUrl = _fallbackRpcUrl();
+  if (!fallbackUrl) return;
+  if (_usingFallback) return; // already on fallback
+  log("rpc", `Primary RPC rate limited — switching to fallback for ${RPC_FALLBACK_COOLDOWN_MS / 1000}s`);
+  _usingFallback = true;
+  _fallbackUntil = Date.now() + RPC_FALLBACK_COOLDOWN_MS;
+  _connection = new Connection(fallbackUrl, "confirmed");
+}
+
+/**
+ * Wrapper for RPC calls that auto-retries on 429 with fallback RPC.
+ */
+async function rpcWithFallback(fn) {
+  try {
+    return await fn(getConnection());
+  } catch (err) {
+    const is429 = err?.message?.includes("429") || err?.message?.includes("rate limited") || err?.code === -32429;
+    if (is429 && _fallbackRpcUrl() && !_usingFallback) {
+      switchToFallbackRpc();
+      return await fn(getConnection());
+    }
+    throw err;
+  }
 }
 
 function getWallet() {
@@ -940,9 +987,9 @@ export async function getMyPositions({ force = false } = {}) {
     const walletPubkey = new PublicKey(walletAddress);
 
     // Owner field sits at offset 40 (8 discriminator + 32 lb_pair)
-    const accounts = await getConnection().getProgramAccounts(DLMM_PROGRAM, {
+    const accounts = await rpcWithFallback((conn) => conn.getProgramAccounts(DLMM_PROGRAM, {
       filters: [{ memcmp: { offset: 40, bytes: walletPubkey.toBase58() } }],
-    });
+    }));
 
     log("positions", `Found ${accounts.length} position account(s)`);
 
@@ -1222,9 +1269,9 @@ export async function getWalletPositions({ wallet_address }) {
   try {
     const DLMM_PROGRAM = new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
 
-    const accounts = await getConnection().getProgramAccounts(DLMM_PROGRAM, {
+    const accounts = await rpcWithFallback((conn) => conn.getProgramAccounts(DLMM_PROGRAM, {
       filters: [{ memcmp: { offset: 40, bytes: new PublicKey(wallet_address).toBase58() } }],
-    });
+    }));
 
     if (accounts.length === 0) {
       return { wallet: wallet_address, total_positions: 0, positions: [] };
@@ -1320,10 +1367,14 @@ export async function claimFees({ position_address }) {
     }
     const txHash = txHashes[0];
     log("claim", `SUCCESS tx: ${txHash}`);
-    _positionsCacheAt = 0; // invalidate cache after claim
-    recordClaim(position_address);
+    // Look up unclaimed fees from cache before invalidating
+    const cachedPos = _positionsCache?.positions?.find(p => p.position === position_address);
+    const feesUsd = cachedPos?.unclaimed_fees_usd || 0;
 
-    return { success: true, position: position_address, tx: txHash };
+    _positionsCacheAt = 0; // invalidate cache after claim
+    recordClaim(position_address, feesUsd);
+
+    return { success: true, position: position_address, tx: txHash, fees_usd: feesUsd };
   } catch (error) {
     log("claim_error", error.message);
     return { success: false, error: error.message };
@@ -1393,24 +1444,8 @@ export async function closePosition({ position_address, _pnlOverride = null }) {
 
     const txHashes = [];
 
-    // ─── Step 1: Claim Fees (to clear account state) ───────────
-    try {
-      log("close", `Step 1: Claiming fees for ${position_address}`);
-      const claimTxs = await pool.claimSwapFee({
-        owner: wallet.publicKey,
-        position: positionData,
-      });
-      for (const tx of Array.isArray(claimTxs) ? claimTxs : [claimTxs]) {
-        const claimHash = await sendManagedTransaction(tx, [wallet], "close claim fees");
-        txHashes.push(claimHash);
-      }
-      log("close", `Step 1 OK: ${txHashes.join(", ")}`);
-    } catch (e) {
-      log("close_warn", `Step 1 (Claim) failed or nothing to claim: ${e.message}`);
-    }
-
-    // ─── Step 2: Remove Liquidity & Close ──────────────────────
-    log("close", `Step 2: Removing liquidity and closing account`);
+    // ─── Remove Liquidity & Close (shouldClaimAndClose handles fees) ───
+    log("close", `Removing liquidity and closing account`);
     try {
       const closeTx = await pool.removeLiquidity({
         user: wallet.publicKey,
@@ -1497,30 +1532,31 @@ export async function closePosition({ position_address, _pnlOverride = null }) {
         forgetPositionSnapshot(tracked);
       } catch { /* best-effort */ }
 
-      // ─── Hard rule: always swap base token back to SOL after close ───
-      try {
-        const baseMint = tracked.base_mint;
-        const SOL = "So11111111111111111111111111111111111111112";
-        if (baseMint && baseMint !== SOL) {
-          const walletBals = await getWalletBalances();
-          const baseToken = walletBals.tokens?.find((t) => t.mint === baseMint);
-          if (baseToken && baseToken.balance > 0 && (baseToken.usd ?? 0) >= 0.10) {
-            log("close", `Auto-swapping ${baseToken.balance} ${baseToken.symbol || baseMint.slice(0, 8)} -> SOL (worth $${baseToken.usd})`);
-            const swapResult = await swapToken({
-              input_mint: baseMint,
-              output_mint: SOL,
-              amount: baseToken.balance,
-            });
-            if (swapResult?.success) {
-              log("close", `Post-close swap OK: tx ${swapResult.tx}`);
-              txHashes.push(swapResult.tx);
-            } else {
-              log("close_warn", `Post-close swap failed: ${swapResult?.error || "unknown"}`);
+      // ─── Hard rule: always swap base token back to SOL after close (non-blocking) ───
+      const baseMint = tracked.base_mint;
+      const SOL = "So11111111111111111111111111111111111111112";
+      if (baseMint && baseMint !== SOL) {
+        (async () => {
+          try {
+            const walletBals = await getWalletBalances();
+            const baseToken = walletBals.tokens?.find((t) => t.mint === baseMint);
+            if (baseToken && baseToken.balance > 0 && (baseToken.usd ?? 0) >= 0.10) {
+              log("close", `Auto-swapping ${baseToken.balance} ${baseToken.symbol || baseMint.slice(0, 8)} -> SOL (worth $${baseToken.usd})`);
+              const swapResult = await swapToken({
+                input_mint: baseMint,
+                output_mint: SOL,
+                amount: baseToken.balance,
+              });
+              if (swapResult?.success) {
+                log("close", `Post-close swap OK: tx ${swapResult.tx}`);
+              } else {
+                log("close_warn", `Post-close swap failed: ${swapResult?.error || "unknown"}`);
+              }
             }
+          } catch (swapErr) {
+            log("close_warn", `Post-close swap error: ${swapErr.message}`);
           }
-        }
-      } catch (swapErr) {
-        log("close_warn", `Post-close swap error: ${swapErr.message}`);
+        })().catch(err => log("close_warn", `Post-close swap unhandled: ${err.message}`));
       }
 
       return { success: true, position: position_address, pool: poolAddress, txs: txHashes, pnl_usd: pnlUsd, pnl_pct: pnlPct };

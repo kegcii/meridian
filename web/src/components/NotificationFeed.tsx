@@ -81,7 +81,7 @@ export default function NotificationFeed({ notifications }: NotificationFeedProp
             card: "bg-steel/10 border-steel/20",
             sweep: "",
           };
-          const time = new Date(n.ts).toLocaleTimeString();
+          const time = new Date(n.ts).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Jakarta" });
           const fullText = getFullText(n);
           const isExpandable = EXPANDABLE_EVENTS.has(n.event) && fullText.length > PREVIEW_LEN;
           const isOpen = expanded.has(n.id);

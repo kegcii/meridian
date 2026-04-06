@@ -14,6 +14,7 @@ import {
   createLlmClient,
   getDefaultModelForProvider,
   getLlmProvider,
+  inferProviderFromModel,
   runCodexExec,
   runClaudeCli,
 } from "./llm-provider.js";
@@ -21,6 +22,21 @@ import {
 const PROVIDER = getLlmProvider();
 const CLI_PROVIDERS = new Set(["codex", "claude"]);
 const client = CLI_PROVIDERS.has(PROVIDER) ? null : createLlmClient(PROVIDER);
+
+// Cache OpenAI-compatible clients per provider so fallback doesn't recreate on every call
+const clientCache = new Map();
+if (client) clientCache.set(PROVIDER, client);
+
+function getEffectiveProvider(model) {
+  return inferProviderFromModel(model) || PROVIDER;
+}
+
+function getClientForProvider(provider) {
+  if (!clientCache.has(provider)) {
+    clientCache.set(provider, createLlmClient(provider));
+  }
+  return clientCache.get(provider);
+}
 
 const DEFAULT_MODEL = process.env.LLM_MODEL || getDefaultModelForProvider();
 const RETRYABLE = new Set([402, 408, 429, 502, 503, 504, 529]);
@@ -270,15 +286,18 @@ async function createClaudeMessage(messages, model, agentType, step) {
 }
 
 async function createProviderMessage(messages, model, agentType, step) {
-  if (PROVIDER === "codex") {
+  const provider = getEffectiveProvider(model);
+
+  if (provider === "codex") {
     return createCodexMessage(messages, model, agentType, step);
   }
 
-  if (PROVIDER === "claude") {
+  if (provider === "claude") {
     return createClaudeMessage(messages, model, agentType, step);
   }
 
-  const response = await client.chat.completions.create({
+  const c = getClientForProvider(provider);
+  const response = await c.chat.completions.create({
     model,
     messages,
     tools,
@@ -312,7 +331,9 @@ function buildCodexLightChatPrompt(messages) {
 }
 
 async function requestLightChatContent(messages, model) {
-  if (PROVIDER === "codex") {
+  const provider = getEffectiveProvider(model);
+
+  if (provider === "codex") {
     return runCodexExec(model, buildCodexLightChatPrompt(messages), {
       cwd: process.cwd(),
       sandbox: "read-only",
@@ -324,11 +345,12 @@ async function requestLightChatContent(messages, model) {
     });
   }
 
-  if (PROVIDER === "claude") {
+  if (provider === "claude") {
     return runClaudeCli(model, buildCodexLightChatPrompt(messages), { effort: "low" });
   }
 
-  const response = await client.chat.completions.create({
+  const c = getClientForProvider(provider);
+  const response = await c.chat.completions.create({
     model,
     messages,
     temperature: config.llm.temperature,
@@ -384,12 +406,14 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
           break;
         } catch (apiErr) {
           const status = apiErr.status || apiErr.statusCode;
-          const retryable = PROVIDER === "codex" || RETRYABLE.has(status);
+          const effectiveProvider = getEffectiveProvider(usedModel);
+          const isCliProvider = effectiveProvider === "codex" || effectiveProvider === "claude";
+          const retryable = isCliProvider || RETRYABLE.has(status);
           if (!retryable) throw apiErr;
 
           if (attempt >= 1 && fallbackModel && usedModel !== fallbackModel) {
             usedModel = fallbackModel;
-            log("agent", `Primary model failed (${status || apiErr.message}), switching to fallback ${fallbackModel}`);
+            log("agent", `Primary model failed (${status || apiErr.message}), switching to fallback ${fallbackModel} [${getEffectiveProvider(fallbackModel)}]`);
           } else {
             const wait = (attempt + 1) * 5000;
             log("agent", `Provider error ${status || apiErr.message}, retrying in ${wait / 1000}s (attempt ${attempt + 1}/3)`);
@@ -468,7 +492,9 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
     } catch (error) {
       log("error", `Agent loop error at step ${step}: ${error.message}`);
 
-      if (error.status === 429) {
+      const isRateLimit = error.status === 429
+        || /rate.?limit|overloaded|too many requests/i.test(error.message);
+      if (isRateLimit) {
         log("agent", "Rate limited, waiting 30s...");
         await sleep(30000);
         continue;
@@ -533,7 +559,9 @@ export async function lightChat(goal, sessionHistory = [], model = null) {
       return { content, userMessage: goal };
     } catch (error) {
       const status = error.status || error.statusCode;
-      const retryable = PROVIDER === "codex" || RETRYABLE.has(status);
+      const effectiveProviderLight = getEffectiveProvider(tryModel);
+      const isCliProviderLight = effectiveProviderLight === "codex" || effectiveProviderLight === "claude";
+      const retryable = isCliProviderLight || RETRYABLE.has(status);
       if (fallbackModel && tryModel !== fallbackModel && retryable) {
         log("agent", `Light chat primary failed (${status || error.message}), trying fallback ${fallbackModel}`);
         continue;

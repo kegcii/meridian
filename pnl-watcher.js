@@ -17,6 +17,8 @@ import fs from "fs";
 const STATE_FILE = "./state.json";
 
 let _intervalHandle = null;
+// Positions successfully closed this session — skip until gone from on-chain
+const _closingPositions = new Set();
 
 function loadState() {
   if (!fs.existsSync(STATE_FILE)) {
@@ -50,8 +52,14 @@ export async function runPnlWatcher() {
     const positions = result?.positions || [];
     if (positions.length === 0) return;
 
+    // Clean up positions that have fully disappeared from on-chain
+    for (const addr of _closingPositions) {
+      if (!positions.find(p => p.position === addr)) _closingPositions.delete(addr);
+    }
+
     for (const p of positions) {
       if (p.pnl_pct == null) continue;
+      if (_closingPositions.has(p.position)) continue;
 
       const tracked = getTrackedPosition(p.position);
       if (tracked?.deployed_at) {
@@ -85,11 +93,12 @@ export async function runPnlWatcher() {
           },
         });
 
-        if (!closeResult?.success) {
+        if (!closeResult?.success && !closeResult?.dry_run) {
           log("pnl_watcher_error", `Failed to close ${p.position.slice(0, 8)}: ${closeResult?.error || "unknown error"}`);
           continue;
         }
 
+        _closingPositions.add(p.position);
         log("pnl_watcher", `Closed ${p.pair || p.position.slice(0, 8)} | PnL: ${p.pnl_pct}% ($${p.pnl_usd})`);
 
         try {

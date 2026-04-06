@@ -11,23 +11,17 @@ import {
 } from "./dlmm.js";
 import { getWalletBalances, swapToken } from "./wallet.js";
 import { studyTopLPers, getPoolInfo } from "./study.js";
-import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../lessons.js";
-import { setPositionInstruction } from "../state.js";
+import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, removeLesson, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../lessons.js";
+import { setPositionInstruction, recordRebalance } from "../state.js";
 import { getPoolMemory, addPoolNote } from "../pool-memory.js";
 import { addStrategy, listStrategies, getStrategy, setActiveStrategy, removeStrategy } from "../strategy-library.js";
 import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../token-blacklist.js";
 import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool } from "../smart-wallets.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
-import { config, reloadScreeningThresholds } from "../config.js";
+import { config, applyConfigChanges } from "../config.js";
 import { updateStagedSignals, getPoolForMint } from "../signal-tracker.js";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import { execSync, spawn } from "child_process";
-import { CONFIG_KEY_MAP, getRequiredSolBalance } from "../runtime-helpers.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USER_CONFIG_PATH = path.join(__dirname, "../user-config.json");
+import { getRequiredSolBalance } from "../runtime-helpers.js";
 import { log, logAction } from "../logger.js";
 import { rememberFact, recallMemory, forgetFact } from "../memory.js";
 import { emit } from "../notifier.js";
@@ -99,6 +93,11 @@ const toolMap = {
     if (!ok) return { error: `Position ${position_address} not found in state` };
     return { saved: true, position: position_address, instruction: instruction || null };
   },
+  record_rebalance: ({ old_position, new_position }) => {
+    if (!old_position || !new_position) return { error: "Both old_position and new_position are required" };
+    recordRebalance(old_position, new_position);
+    return { success: true, old_position, new_position, message: `Recorded rebalance: ${old_position} → ${new_position}` };
+  },
   self_update: async () => {
     try {
       const result = execSync("git pull", { cwd: process.cwd(), encoding: "utf8" }).trim();
@@ -135,6 +134,11 @@ const toolMap = {
   kb_migrate: kbMigrate,
   kb_stats: kbGetStats,
   kb_rebuild_indexes: kbRebuildIndexes,
+  remove_lesson: ({ id }) => {
+    const n = removeLesson(id);
+    log("lessons", `Removed ${n} lesson with id "${id}"`);
+    return { removed: n, id };
+  },
   clear_lessons: ({ mode, keyword }) => {
     if (mode === "all") {
       const n = clearAllLessons();
@@ -173,36 +177,21 @@ const toolMap = {
       changes = rest;
       reason = r;
     }
-    const applied = {};
-    const unknown = [];
-
+    // Coerce numeric strings to numbers (model sometimes passes "5" instead of 5)
     for (const [key, val] of Object.entries(changes)) {
-      if (!CONFIG_KEY_MAP[key]) { unknown.push(key); continue; }
-      // Coerce numeric strings to numbers (model sometimes passes "5" instead of 5)
-      const coerced = typeof val === "string" && /^-?\d+(\.\d+)?$/.test(val) ? Number(val) : val;
-      applied[key] = coerced;
+      if (typeof val === "string" && /^-?\d+(\.\d+)?$/.test(val)) {
+        changes[key] = Number(val);
+      }
     }
 
-    if (Object.keys(applied).length === 0) {
+    const result = applyConfigChanges({ changes, source: "agent", reason });
+
+    if (!result.success) {
+      const unknown = result.rejected?.unknown ? Object.keys(result.rejected.unknown) : [];
       return { success: false, unknown, reason };
     }
 
-    // Apply to live config immediately
-    for (const [key, val] of Object.entries(applied)) {
-      const [section, field] = CONFIG_KEY_MAP[key];
-      const before = config[section][field];
-      config[section][field] = val;
-      log("config", `update_config: config.${section}.${field} ${before} → ${val} (verify: ${config[section][field]})`);
-    }
-
-    // Persist to user-config.json
-    let userConfig = {};
-    if (fs.existsSync(USER_CONFIG_PATH)) {
-      try { userConfig = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8")); } catch { /**/ }
-    }
-    Object.assign(userConfig, applied);
-    userConfig._lastAgentTune = new Date().toISOString();
-    fs.writeFileSync(USER_CONFIG_PATH, JSON.stringify(userConfig, null, 2));
+    const { applied } = result;
 
     // Restart cron jobs if intervals changed
     const intervalChanged = applied.managementIntervalMin != null || applied.screeningIntervalMin != null || applied.pnlWatcherIntervalSec != null;
@@ -222,6 +211,7 @@ const toolMap = {
       addLesson(`[SELF-TUNED] Changed ${summary} — ${reason}`, ["self_tune", "config_change"]);
     }
 
+    const unknown = result.rejected?.unknown ? Object.keys(result.rejected.unknown) : [];
     log("config", `Agent self-tuned: ${JSON.stringify(applied)} — ${reason}`);
     return { success: true, applied, unknown, reason };
   },
