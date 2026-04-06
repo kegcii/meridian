@@ -8,7 +8,7 @@
 
 import { log } from "./logger.js";
 import { config } from "./config.js";
-import { updatePnlAndCheckExits, getTrackedPosition } from "./state.js";
+import { updatePnlAndCheckExits, getTrackedPosition, getTrackedPositions } from "./state.js";
 import { getMyPositions, closePosition } from "./tools/dlmm.js";
 import { emit } from "./notifier.js";
 import { isBusy, isManagementBusy, isScreeningBusy } from "./session.js";
@@ -131,6 +131,73 @@ export async function runPnlWatcher() {
     }
   } catch (err) {
     log("pnl_watcher_error", `Tick failed: ${err.message}`);
+  }
+
+  // Run wallet sweep after position checks (non-blocking on errors above)
+  try {
+    if (!isBusy() && !isManagementBusy() && !isScreeningBusy()) {
+      await sweepLeftoverTokens();
+    }
+  } catch (err) {
+    log("pnl_watcher_error", `Sweep tick failed: ${err.message}`);
+  }
+}
+
+// ─── Wallet sweep: catch leftover base tokens from closed positions ───
+let _lastSweepAt = 0;
+const SWEEP_INTERVAL_MS = 5 * 60 * 1000; // every 5 minutes
+
+async function sweepLeftoverTokens() {
+  if (Date.now() - _lastSweepAt < SWEEP_INTERVAL_MS) return;
+  _lastSweepAt = Date.now();
+
+  try {
+    const { getWalletBalances, swapToken } = await import("./tools/wallet.js");
+    const walletBals = await getWalletBalances();
+    if (!walletBals?.tokens?.length) return;
+
+    // Collect base mints from all closed positions
+    const closedPositions = getTrackedPositions(false).filter(p => p.closed);
+    const closedMints = new Set();
+    for (const p of closedPositions) {
+      if (p.base_mint) closedMints.add(p.base_mint);
+    }
+
+    // Also collect base mints from open positions (don't sweep those)
+    const openPositions = getTrackedPositions(true);
+    const openMints = new Set();
+    for (const p of openPositions) {
+      if (p.base_mint) openMints.add(p.base_mint);
+    }
+
+    const SOL = "So11111111111111111111111111111111111111112";
+    for (const token of walletBals.tokens) {
+      if (token.mint === SOL || token.mint === config.tokens?.USDC) continue;
+      if (token.balance <= 0 || (token.usd ?? 0) < 0.10) continue;
+      // Only sweep tokens from closed positions, not tokens we're actively using
+      if (!closedMints.has(token.mint) || openMints.has(token.mint)) continue;
+
+      log("pnl_watcher", `Sweep: found leftover ${token.balance} ${token.symbol || token.mint.slice(0, 8)} worth $${token.usd} — swapping to SOL`);
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const swapResult = await swapToken({
+            input_mint: token.mint,
+            output_mint: SOL,
+            amount: token.balance,
+          });
+          if (swapResult?.success || swapResult?.dry_run) {
+            log("pnl_watcher", `Sweep OK: ${token.symbol || token.mint.slice(0, 8)} -> SOL tx ${swapResult.tx || "dry-run"}`);
+            break;
+          }
+          log("pnl_watcher_error", `Sweep swap failed: ${swapResult?.error || "unknown"} [attempt ${attempt}/3]`);
+        } catch (err) {
+          log("pnl_watcher_error", `Sweep swap error: ${err.message} [attempt ${attempt}/3]`);
+        }
+        if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 2000));
+      }
+    }
+  } catch (err) {
+    log("pnl_watcher_error", `Sweep failed: ${err.message}`);
   }
 }
 

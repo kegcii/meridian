@@ -1532,29 +1532,33 @@ export async function closePosition({ position_address, _pnlOverride = null }) {
         forgetPositionSnapshot(tracked);
       } catch { /* best-effort */ }
 
-      // ─── Hard rule: always swap base token back to SOL after close (non-blocking) ───
+      // ─── Hard rule: always swap base token back to SOL after close (non-blocking, with retry) ───
       const baseMint = tracked.base_mint;
       const SOL = "So11111111111111111111111111111111111111112";
       if (baseMint && baseMint !== SOL) {
         (async () => {
-          try {
-            const walletBals = await getWalletBalances();
-            const baseToken = walletBals.tokens?.find((t) => t.mint === baseMint);
-            if (baseToken && baseToken.balance > 0 && (baseToken.usd ?? 0) >= 0.10) {
-              log("close", `Auto-swapping ${baseToken.balance} ${baseToken.symbol || baseMint.slice(0, 8)} -> SOL (worth $${baseToken.usd})`);
+          const MAX_RETRIES = 3;
+          for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+              const walletBals = await getWalletBalances();
+              const baseToken = walletBals.tokens?.find((t) => t.mint === baseMint);
+              if (!baseToken || baseToken.balance <= 0 || (baseToken.usd ?? 0) < 0.10) break;
+              log("close", `Auto-swapping ${baseToken.balance} ${baseToken.symbol || baseMint.slice(0, 8)} -> SOL (worth $${baseToken.usd})${attempt > 1 ? ` [retry ${attempt}/${MAX_RETRIES}]` : ""}`);
               const swapResult = await swapToken({
                 input_mint: baseMint,
                 output_mint: SOL,
                 amount: baseToken.balance,
               });
-              if (swapResult?.success) {
-                log("close", `Post-close swap OK: tx ${swapResult.tx}`);
-              } else {
-                log("close_warn", `Post-close swap failed: ${swapResult?.error || "unknown"}`);
+              if (swapResult?.success || swapResult?.dry_run) {
+                log("close", `Post-close swap OK: tx ${swapResult.tx || "dry-run"}`);
+                break;
               }
+              log("close_warn", `Post-close swap failed: ${swapResult?.error || "unknown"} [attempt ${attempt}/${MAX_RETRIES}]`);
+              if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, attempt * 2000));
+            } catch (swapErr) {
+              log("close_warn", `Post-close swap error: ${swapErr.message} [attempt ${attempt}/${MAX_RETRIES}]`);
+              if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, attempt * 2000));
             }
-          } catch (swapErr) {
-            log("close_warn", `Post-close swap error: ${swapErr.message}`);
           }
         })().catch(err => log("close_warn", `Post-close swap unhandled: ${err.message}`));
       }
