@@ -107,34 +107,12 @@ export async function getTopCandidates({ limit = 10 } = {}) {
 
   let totalScreened = pools.length;
 
-  // ── Source 2: Fabriq Trending (browser-imported cache) ──
-  let fabriqCount = 0;
-  try {
-    const { getFabriqCandidates } = await import("./fabriq.js");
-    const fabriqPools = await getFabriqCandidates();
-    const existingPools = new Set(eligible.map((p) => p.pool));
-    const existingMints = new Set(eligible.map((p) => p.base?.mint).filter(Boolean));
-    for (const fp of fabriqPools) {
-      if (existingPools.has(fp.pool) || existingMints.has(fp.base?.mint)) continue;
-      if (occupiedPools.has(fp.pool) || occupiedMints.has(fp.base?.mint)) continue;
-      eligible.push(fp);
-      existingPools.add(fp.pool);
-      existingMints.add(fp.base?.mint);
-      fabriqCount++;
-    }
-    totalScreened += fabriqPools.length;
-    if (fabriqCount > 0) log("fabriq", `Added ${fabriqCount} new candidate(s) from Fabriq trending`);
-  } catch (e) {
-    log("fabriq", `Fabriq discovery error: ${e.message}`);
-  }
-
   eligible = eligible.slice(0, limit);
 
   return {
     candidates: eligible.map(normalizeCandidateForUi),
     total_eligible: eligible.length,
     total_screened: totalScreened,
-    fabriq_candidates: fabriqCount,
   };
 }
 

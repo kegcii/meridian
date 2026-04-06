@@ -192,33 +192,6 @@ export function startServer(timersFn) {
     }
   });
 
-  // ── Fabriq trending import (browser bookmarklet → server) ──
-  app.post("/api/fabriq-import", async (req, res) => {
-    try {
-      const { importFabriqTrending } = await import("./tools/fabriq.js");
-      const { rows } = req.body;
-      if (!Array.isArray(rows)) {
-        return res.status(400).json({ error: "Expected { rows: string[][] }" });
-      }
-      const result = importFabriqTrending(rows);
-      broadcast(wss, { type: "notification", event: "fabriq:import", data: { count: result.imported } });
-      res.json({ ok: true, imported: result.imported });
-    } catch (err) {
-      log("server_error", `POST /api/fabriq-import failed: ${err.message}`);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.get("/api/fabriq-trending", async (_req, res) => {
-    try {
-      const { loadFabriqTrending } = await import("./tools/fabriq.js");
-      const data = loadFabriqTrending({ maxAge: 60 * 60 * 1000 });
-      res.json(data || { pools: [], count: 0, stale: true });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
   app.get("/api/insights", (_req, res) => {
     try {
       res.json(buildInsightsPayload());
@@ -228,15 +201,6 @@ export function startServer(timersFn) {
     }
   });
 
-  // Fabriq bookmarklet — serve from the repo root so it works without file:// access
-  app.get("/bookmarklet", (_req, res) => {
-    const bmPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "fabriq-bookmarklet.html");
-    if (fs.existsSync(bmPath)) {
-      res.sendFile(bmPath);
-    } else {
-      res.status(404).send("bookmarklet file not found");
-    }
-  });
 
   // Static files — only if the dist directory exists (production build)
   if (fs.existsSync(distPath)) {

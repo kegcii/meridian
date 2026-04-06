@@ -850,7 +850,7 @@ if (runtimeMode.interactive) {
 
   console.log(`
 Commands:
-  1 / 2 / 3 ...  Deploy ${DEPLOY} SOL into that pool
+  1 / 2 / 3 ...  Deploy ${config.management.deployAmountSol} SOL into that pool
   auto           Let the agent pick and deploy automatically
   /status        Refresh wallet + positions
   /candidates    Refresh top pool list
@@ -874,7 +874,7 @@ Commands:
       await runScreeningBusy(async () => {
         const pool = startupCandidates[pick - 1];
         const currentBalance = await getWalletBalances().catch(() => null);
-        const deployAmount = currentBalance ? computeDeployAmount(currentBalance.sol) : DEPLOY;
+        const deployAmount = currentBalance ? computeDeployAmount(currentBalance.sol) : config.management.deployAmountSol;
         console.log(`\nDeploying ${deployAmount} SOL into ${pool.name}...\n`);
         const { content: reply } = await screenerLoop(
           `Deploy ${deployAmount} SOL into pool ${pool.pool} (${pool.name}). Call get_active_bin first then deploy_position. Report result.`,
@@ -891,7 +891,7 @@ Commands:
       await runScreeningBusy(async () => {
         console.log("\nAgent is picking and deploying...\n");
         const currentBalance = await getWalletBalances().catch(() => null);
-        const deployAmount = currentBalance ? computeDeployAmount(currentBalance.sol) : DEPLOY;
+        const deployAmount = currentBalance ? computeDeployAmount(currentBalance.sol) : config.management.deployAmountSol;
         const { content: reply } = await screenerLoop(
           `get_top_candidates, pick the best one, get_active_bin, deploy_position with ${deployAmount} SOL. Execute now, don't ask.`,
           config.llm.maxSteps
@@ -1069,7 +1069,7 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
   if (runtimeMode.runStartupCheck) (async () => {
     try {
       const currentBalance = await getWalletBalances().catch(() => null);
-      const deployAmount = currentBalance ? computeDeployAmount(currentBalance.sol) : DEPLOY;
+      const deployAmount = currentBalance ? computeDeployAmount(currentBalance.sol) : config.management.deployAmountSol;
       await screenerLoop(`
 STARTUP CHECK
 1. get_wallet_balance. 2. get_my_positions. 3. If SOL >= ${config.management.minSolToOpen}: get_top_candidates then deploy ${deployAmount} SOL. 4. Report.
