@@ -38,3 +38,6 @@ web/tsconfig.tsbuildinfo
 
 # Dev context
 context.md
+CLAUDE.md
+.git
+.claude
