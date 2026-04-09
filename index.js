@@ -7,7 +7,7 @@ import { agentLoop, lightChat, getScreenerModelLabel, screenerLoop } from "./age
 import { log } from "./logger.js";
 import { getMyPositions } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
-import { getTopCandidates } from "./tools/screening.js";
+import { getTopCandidates, rankCandidatesByDarwin } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary, deduplicateLessons } from "./lessons.js";
 import { registerCronRestarter } from "./tools/executor.js";
@@ -477,7 +477,14 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
           const smartWalletCount = swResult?.in_pool?.length || 0;
           c._smartWalletCount = smartWalletCount;
 
-          let block = `[${c.name}] pool: ${c.pool} | bin_step: ${c.bin_step} | fee/aTVL: ${c.fee_active_tvl_ratio}% | vol: $${c.volume} | organic: ${c.organic_score} | holders: ${c.holders} | volatility: ${c.volatility ?? "?"}`;
+          let block = `[${c.name}] pool: ${c.pool} | darwin: ${c.darwin_score ?? "?"}/100 | bin_step: ${c.bin_step} | fee/aTVL: ${c.fee_active_tvl_ratio}% | vol: $${c.volume} | organic: ${c.organic_score} | holders: ${c.holders} | volatility: ${c.volatility ?? "?"}`;
+
+          if (Array.isArray(c.darwin_top_signals) && c.darwin_top_signals.length > 0) {
+            const topSignals = c.darwin_top_signals
+              .map((s) => `${s.signal}=${s.value} (${s.direction})`)
+              .join(", ");
+            block += `\n  Darwin context: higher score = better fit to learned winning signals. Top drivers: ${topSignals}`;
+          }
 
           if (dynFeeResult) block += ` | base_fee: ${c.fee_pct}% | dynamic_fee: ${dynFeeResult.dynamic_fee_pct}%`;
           if (tokenData) {
@@ -503,14 +510,23 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
           if (okxSignalResult) {
             block += `\n  OKX signal: ${okxSignalResult.summary}`;
           }
-          return block;
+          return { pool: c.pool, block };
         }));
-        const validBlocks = blocks.filter(b => b.status === "fulfilled").map(b => b.value);
+        const rankedCandidates = rankCandidatesByDarwin(candidates);
+        loadedCandidates = rankedCandidates;
+        const blockMap = new Map(
+          blocks
+            .filter((b) => b.status === "fulfilled")
+            .map((b) => [b.value.pool, b.value.block])
+        );
+        const validBlocks = rankedCandidates
+          .map((c) => blockMap.get(c.pool))
+          .filter(Boolean);
         if (validBlocks.length > 0) {
-          candidateBlocks = `\n\nPRE-LOADED CANDIDATES (recon already done — evaluate and deploy the best one):\n${validBlocks.join("\n\n")}\n`;
+          candidateBlocks = `\n\nPRE-LOADED CANDIDATES (recon already done — evaluate and deploy the best one):\nDarwin score is a learned 0-100 ranking over the current shortlist. Higher = stronger fit to historically winning signal patterns. Use it as a ranking aid, not a hard deploy rule.\n${validBlocks.join("\n\n")}\n`;
         }
         // Stage signals for each candidate so deploy can snapshot them
-        for (const c of candidates) {
+        for (const c of rankedCandidates) {
           try {
             stageSignals(c.pool, {
               organic_score: c.organic_score ?? null,
@@ -524,6 +540,12 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
               study_win_rate: null,    // filled by tool signal capture in executor
               hive_consensus: null,    // filled by hive mind if available
               ath_proximity: c._okxResult?.ath_proximity_pct ?? null,
+              // New Darwinian signals
+              volume_trend: c._okxResult?.candles?.volume_trend ?? null,
+              okx_signal_present: (c._okxSignal?.signal_count_30m || 0) > 0,
+              change_1h: c._okxResult?.change_1h ?? null,
+              candle_price_range: c._okxResult?.candles?.price_range_pct ?? null,
+              // Extra OKX signal metadata (not weighted but stored for analysis)
               okx_signal_count_30m: c._okxSignal?.signal_count_30m ?? null,
               okx_signal_count_2h: c._okxSignal?.signal_count_2h ?? null,
               okx_signal_amount_30m: c._okxSignal?.signal_amount_usd_30m ?? null,
@@ -537,7 +559,7 @@ ${activeStrategy ? `\nSAVED STRATEGY (reference, not mandatory): ${activeStrateg
         try {
           const hiveMind = await import("./hive-mind.js");
           if (hiveMind.isEnabled()) {
-            const poolAddresses = candidates.map(c => c.pool).filter(Boolean);
+            const poolAddresses = rankedCandidates.map(c => c.pool).filter(Boolean);
             if (poolAddresses.length > 0) {
               const hiveConsensus = await hiveMind.formatPoolConsensusForPrompt(poolAddresses);
               if (hiveConsensus) candidateBlocks += "\n" + hiveConsensus;
@@ -621,8 +643,17 @@ ${getRangeSelectionText(deployAmount, currentBalance?.sol)}
 
     log("cron", "Starting KB health check");
     try {
+      // Fast deterministic lint first — no LLM needed
+      const { lintKnowledgeBase } = await import("./knowledge-base.js");
+      const lintResult = lintKnowledgeBase();
+      if (lintResult) {
+        log("cron", `KB lint: ${lintResult.total_articles} articles, ${lintResult.issues.length} issues (${lintResult.orphan_count} orphans, ${lintResult.stale_count} stale, ${lintResult.empty_count} empty)`);
+      }
+      // Only call LLM for deeper review if lint found issues
+      const issueCount = lintResult?.issues?.length || 0;
+      const lintContext = issueCount > 0 ? `\n\nLINT RESULTS (${issueCount} issues):\n${lintResult.issues.join("\n")}` : "";
       const { content } = await agentLoop(
-        `KNOWLEDGE BASE HEALTH CHECK: Read kb_read("INDEX.md") to see all articles. Then review 3-5 articles that seem most likely to have issues (oldest, most cross-referenced, or covering active pools). Look for: contradictions between articles, stale data that no longer matches recent performance, missing cross-references ([[concept]] links), and articles that could be merged or split. Fix any issues found using kb_write. Report what you checked and any changes made.`,
+        `KNOWLEDGE BASE HEALTH CHECK:${lintContext}\nRead kb_read("INDEX.md") to see all articles. Review 3-5 articles that seem most likely to have issues. Look for: contradictions, stale data, missing cross-references, and articles that could be merged. Fix any issues using kb_write. Report what you checked and any changes made.`,
         10, [], "GENERAL", config.llm.generalModel
       );
       emit("cycle:kb_health", { report: content });

@@ -38,6 +38,69 @@ const DEFAULTS = {
   kept_overrides: {},    // section → text for permanently kept experiment overrides
 };
 
+function readUserConfigSnapshot() {
+  const userConfigPath = path.join(__dirname, "user-config.json");
+  try {
+    if (!fs.existsSync(userConfigPath)) return {};
+    return JSON.parse(fs.readFileSync(userConfigPath, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function getEnvironmentSnapshot() {
+  const userConfig = readUserConfigSnapshot();
+  let weightsMeta = {};
+  try {
+    const weights = loadWeights();
+    weightsMeta = {
+      last_recalc: weights.last_recalc ?? null,
+      recalc_count: weights.recalc_count ?? 0,
+    };
+  } catch {
+    weightsMeta = {
+      last_recalc: null,
+      recalc_count: 0,
+    };
+  }
+
+  return {
+    thresholds_last_evolved: userConfig._lastEvolved ?? null,
+    thresholds_positions_at_evolution: userConfig._positionsAtEvolution ?? 0,
+    darwin_last_recalc: weightsMeta.last_recalc,
+    darwin_recalc_count: weightsMeta.recalc_count,
+  };
+}
+
+function environmentChangedSince(snapshot = {}) {
+  const current = getEnvironmentSnapshot();
+  return (
+    current.thresholds_last_evolved !== (snapshot.thresholds_last_evolved ?? null) ||
+    current.thresholds_positions_at_evolution !== (snapshot.thresholds_positions_at_evolution ?? 0) ||
+    current.darwin_last_recalc !== (snapshot.darwin_last_recalc ?? null) ||
+    current.darwin_recalc_count !== (snapshot.darwin_recalc_count ?? 0)
+  );
+}
+
+function getTrialPositionsForExperiment(experiment, perfData) {
+  if (!experiment) return [];
+
+  if (experiment.section === "manager_logic") {
+    return perfData.filter((p) => {
+      const closedAt = p.recorded_at || p.closed_at;
+      return closedAt ? closedAt >= experiment.started_at : false;
+    });
+  }
+
+  return perfData.slice(experiment.started_at_position)
+    .filter((p) => {
+      const deployedAt = p.deployed_at;
+      if (deployedAt) return deployedAt >= experiment.started_at;
+      const closedAt = p.recorded_at || p.closed_at;
+      return closedAt ? closedAt >= experiment.started_at : true;
+    });
+}
+
 export function loadAutoresearch() {
   if (!fs.existsSync(AUTORESEARCH_FILE)) {
     saveAutoresearch(DEFAULTS);
@@ -148,22 +211,38 @@ async function analyzeAndGenerate(perfData, lessons, cfg, state) {
     }
   }
 
-  // 2. Pick the worst section
-  let worstSection = "screener_criteria";
-  let worstCount = 0;
-  for (const [section, losses] of Object.entries(sectionLosses)) {
-    if (losses.length > worstCount) {
-      worstCount = losses.length;
-      worstSection = section;
-    }
-  }
-
-  if (worstCount === 0) {
+  // 2. Pick the worst section — with rotation to avoid optimizing the same section repeatedly
+  const sections = Object.entries(sectionLosses).filter(([, losses]) => losses.length > 0);
+  if (sections.length === 0) {
     log("autoresearch", "No losses in recent closes — nothing to optimize");
     return;
   }
 
+  // Check last N experiments — if the same section was targeted 3+ times in a row, rotate
+  const MAX_CONSECUTIVE = 3;
+  const recentSections = (state.experiments || []).slice(-MAX_CONSECUTIVE).map(e => e.section);
+  const lastSection = recentSections[0];
+  const allSame = recentSections.length >= MAX_CONSECUTIVE && recentSections.every(s => s === lastSection);
+
+  // Sort by loss count descending
+  sections.sort((a, b) => b[1].length - a[1].length);
+
+  let worstSection, worstCount;
+  if (allSame && sections.length > 1) {
+    // Force rotation to the second-worst section
+    [worstSection, { length: worstCount }] = [sections[1][0], { length: sections[1][1].length }];
+    log("autoresearch", `Rotating away from ${lastSection} (${MAX_CONSECUTIVE}x consecutive) → trying ${worstSection}`);
+  } else {
+    [worstSection, { length: worstCount }] = [sections[0][0], { length: sections[0][1].length }];
+  }
+
   log("autoresearch", `Worst section: ${worstSection} (${worstCount} attributed losses)`);
+
+  const minAttributedLosses = cfg.autoresearch?.minAttributedLosses ?? 3;
+  if (worstCount < minAttributedLosses) {
+    log("autoresearch", `Only ${worstCount} attributed losses for ${worstSection} (need ${minAttributedLosses}) — skipping`);
+    return;
+  }
 
   // 3. Read current prompt text for that section
   const currentText = getPromptSectionText(worstSection);
@@ -172,17 +251,51 @@ async function analyzeAndGenerate(perfData, lessons, cfg, state) {
     return;
   }
 
-  // 4. Generate modification via cheap LLM
+  // 4. Generate modification via LLM with KB context
   const failures = sectionLosses[worstSection];
   const failureDesc = failures
-    .map(f => `- ${f.pool_name || "unknown"}: PnL ${f.pnl_pct}%, reason: ${f.close_reason || "unknown"}`)
+    .map(f => `- ${f.pool_name || "unknown"}: PnL ${f.pnl_pct}%, reason: ${f.close_reason || "unknown"}, strategy: ${f.strategy || "?"}, volatility: ${f.volatility || "?"}`)
     .join("\n");
+
+  // Search KB for patterns related to the failing pools/strategies
+  let kbContext = "";
+  try {
+    const { searchArticles, readArticle } = await import("./knowledge-base.js");
+    const kbQueries = new Set();
+    for (const f of failures) {
+      if (f.pool_name) kbQueries.add(f.pool_name.replace(/-SOL$/, ""));
+      if (f.strategy) kbQueries.add(f.strategy);
+      if (f.close_reason?.includes("OOR")) kbQueries.add("oor");
+    }
+    kbQueries.add(worstSection.replace("_", " "));
+
+    const seen = new Set();
+    const kbSnippets = [];
+    for (const q of kbQueries) {
+      const results = searchArticles(q);
+      for (const r of (results.results || []).slice(0, 3)) {
+        if (seen.has(r.path)) continue;
+        seen.add(r.path);
+        const article = readArticle(r.path);
+        if (article?.content) {
+          kbSnippets.push(`--- ${r.path} ---\n${article.content.slice(0, 500)}`);
+        }
+        if (kbSnippets.length >= 8) break;
+      }
+      if (kbSnippets.length >= 8) break;
+    }
+    if (kbSnippets.length > 0) {
+      kbContext = `\n\nKNOWLEDGE BASE CONTEXT (relevant articles from prior experience):\n${kbSnippets.join("\n\n")}`;
+    }
+  } catch (e) {
+    log("autoresearch", `KB lookup failed (non-fatal): ${e.message}`);
+  }
 
   const llmModel = cfg.autoresearch?.llmModel ?? getDefaultModelForProvider(getLlmProvider());
   let hypothesis, modifiedText;
 
   try {
-    const result = await callLLM(llmModel, worstSection, worstCount, currentText, failureDesc);
+    const result = await callLLM(llmModel, worstSection, worstCount, currentText, failureDesc + kbContext);
     hypothesis = result.hypothesis;
     modifiedText = result.modifiedText;
   } catch (e) {
@@ -225,6 +338,7 @@ async function analyzeAndGenerate(perfData, lessons, cfg, state) {
       positions: 0,
     },
     status: "active",
+    environment_snapshot: getEnvironmentSnapshot(),
   };
 
   // Snapshot current Darwin signal weights for audit trail.
@@ -255,21 +369,23 @@ async function evaluateExperiment(perfData, cfg, state) {
   if (!experiment) return;
 
   const minCloses = cfg.autoresearch?.minClosesPerTrial ?? 7;
+  const minEvidenceCloses = cfg.autoresearch?.minEvidenceCloses ?? Math.max(10, minCloses + 2);
+  const minAbsoluteWinRateDeltaPct = cfg.autoresearch?.minAbsoluteWinRateDeltaPct ?? 10;
+  const minAbsolutePnlDeltaPct = cfg.autoresearch?.minAbsolutePnlDeltaPct ?? 0.5;
   const improvementPct = cfg.autoresearch?.improvementPct ?? 15;
   const declinePct = cfg.autoresearch?.declinePct ?? 15;
   const cooldownCloses = cfg.autoresearch?.cooldownCloses ?? 5;
 
-  // Positions closed since experiment started, filtered to only include those
-  // actually DEPLOYED after the experiment began. Positions deployed before the
-  // experiment but closed after it started would contaminate trial results since
-  // the prompt change couldn't have influenced their deployment decision.
-  const trialPositions = perfData.slice(experiment.started_at_position)
-    .filter(p => {
-      // Only count positions actually deployed AFTER the experiment started
-      const deployedAt = p.deployed_at;
-      if (!deployedAt) return true; // no deploy timestamp, include by default
-      return deployedAt >= experiment.started_at;
-    });
+  if (environmentChangedSince(experiment.environment_snapshot)) {
+    log("autoresearch", `Environment changed during ${experiment.id} — invalidating trial to avoid confounded results`);
+    finishExperiment(state, "invalidated_environment_change", 0);
+    return;
+  }
+
+  // Screener/range changes should only be judged on positions deployed after the
+  // experiment started. Manager changes should be judged on any positions CLOSED
+  // after the experiment started, including positions that were already open.
+  const trialPositions = getTrialPositionsForExperiment(experiment, perfData);
   const trialCount = trialPositions.length;
 
   experiment.trial.positions = trialCount;
@@ -292,6 +408,14 @@ async function evaluateExperiment(perfData, cfg, state) {
     return;
   }
 
+  // Require a slightly larger evidence window before making a keep/revert call.
+  // This reduces noisy decisions when the default minCloses is just barely met.
+  if (trialCount < minEvidenceCloses) {
+    saveAutoresearch(state);
+    log("autoresearch", `Experiment ${experiment.id}: ${trialCount}/${minEvidenceCloses} evidence closes (waiting for a less noisy verdict)`);
+    return;
+  }
+
   // Compute trial metrics
   const trialWins = trialPositions.filter(p => (p.pnl_usd ?? 0) > 0).length;
   const trialWR = (trialWins / trialCount) * 100;
@@ -303,13 +427,33 @@ async function evaluateExperiment(perfData, cfg, state) {
   // Compare to baseline using composite score: 60% win rate + 40% avg PnL
   const baselineWR = experiment.baseline.win_rate;
   const wrImprovement = ((trialWR - baselineWR) / Math.max(baselineWR, 1)) * 100;
+  const absoluteWinRateDelta = trialWR - baselineWR;
 
   const baselinePnl = experiment.baseline.avg_pnl_pct;
   const pnlImprovement = baselinePnl !== 0
     ? ((trialAvgPnl - baselinePnl) / Math.max(Math.abs(baselinePnl), 0.1)) * 100
     : (trialAvgPnl > 0 ? 100 : trialAvgPnl < 0 ? -100 : 0);
+  const absolutePnlDelta = trialAvgPnl - baselinePnl;
 
   const compositeImprovement = (wrImprovement * 0.6) + (pnlImprovement * 0.4);
+
+  const trialLosses = trialCount - trialWins;
+  const isImbalancedTinySample = trialCount < 2 * minEvidenceCloses && (trialWins === 0 || trialLosses === 0);
+  if (isImbalancedTinySample) {
+    log("autoresearch", `Experiment ${experiment.id}: ${trialWins}/${trialCount} wins/losses too one-sided for a confident verdict — waiting for more closes`);
+    saveAutoresearch(state);
+    return;
+  }
+
+  const hasMeaningfulAbsoluteDelta =
+    Math.abs(absoluteWinRateDelta) >= minAbsoluteWinRateDeltaPct ||
+    Math.abs(absolutePnlDelta) >= minAbsolutePnlDeltaPct;
+
+  if (!hasMeaningfulAbsoluteDelta) {
+    log("autoresearch", `Experiment ${experiment.id}: absolute deltas too small for a confident verdict (WR Δ ${absoluteWinRateDelta.toFixed(1)} pts, PnL Δ ${absolutePnlDelta.toFixed(2)} pts)`);
+    finishExperiment(state, "inconclusive", cooldownCloses);
+    return;
+  }
 
   log("autoresearch", `Experiment ${experiment.id}: trial WR ${trialWR.toFixed(1)}% vs baseline ${baselineWR.toFixed(1)}% (WR improvement: ${wrImprovement.toFixed(1)}%, PnL improvement: ${pnlImprovement.toFixed(1)}%, composite: ${compositeImprovement.toFixed(1)}%)`);
 
@@ -449,21 +593,27 @@ MODIFIED_TEXT:
   const apiKey = getProviderApiKey();
   if (!apiKey) throw new Error("LLM API key/token not available for autoresearch");
 
+  const body = {
+    model,
+    messages: [
+      { role: "system", content: systemMsg },
+      { role: "user", content: userMsg },
+    ],
+    temperature: 0.4,
+    max_tokens: 4096,
+  };
+
+  if (provider === "minimax") {
+    body.reasoning_split = true;
+  }
+
   const response = await fetch(baseURL, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: systemMsg },
-        { role: "user", content: userMsg },
-      ],
-      temperature: 0.4,
-      max_tokens: 4096,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -472,7 +622,8 @@ MODIFIED_TEXT:
   }
 
   const data = await response.json();
-  const content = data.choices?.[0]?.message?.content;
+  const message = data.choices?.[0]?.message;
+  const content = message?.content;
   if (!content) throw new Error("Empty response from LLM");
 
   // Parse response
