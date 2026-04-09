@@ -64,6 +64,7 @@ export function trackPosition({
   adopted = false,
   study_avg_hold_hours = null,
   signal_snapshot = null,
+  sol_invested = null,
 }) {
   const state = load();
   state.positions[position] = {
@@ -88,6 +89,9 @@ export function trackPosition({
     adopted,
     study_avg_hold_hours: study_avg_hold_hours || null,
     signal_snapshot: signal_snapshot || null,
+    sol_invested: sol_invested || null,
+    sol_recovered: null,
+    true_pnl_sol: null,
     out_of_range_since: null,
     last_claim_at: null,
     total_fees_claimed_usd: 0,
@@ -102,6 +106,21 @@ export function trackPosition({
   pushEvent(state, { action, position, pool_name: pool_name || pool });
   save(state);
   log("state", `Tracked ${adopted ? "adopted" : "new"} position: ${position} in pool ${pool}`);
+}
+
+/**
+ * Update fields on an already-tracked position (e.g. sol_invested after wide-range deploy,
+ * or sol_recovered / true_pnl_sol after close).
+ */
+export function updateTrackedPosition(position_address, updates) {
+  const state = load();
+  const pos = state.positions[position_address];
+  if (!pos) return false;
+  for (const [key, value] of Object.entries(updates)) {
+    if (value !== undefined) pos[key] = value;
+  }
+  save(state);
+  return true;
 }
 
 /**
@@ -233,7 +252,9 @@ export function updatePnlAndCheckExits(position_address, currentPnlPct, config) 
   // Hard stop loss
   if (mgmt.stopLossPct && currentPnlPct <= mgmt.stopLossPct) {
     action = `STOP_LOSS: PnL ${currentPnlPct.toFixed(1)}% hit stop loss (${mgmt.stopLossPct}%)`;
-    pos.notes.push(action);
+    // Only add note if not already triggered (prevent spam on repeated ticks)
+    const alreadyTriggered = pos.notes.some(n => n.startsWith("STOP_LOSS:"));
+    if (!alreadyTriggered) pos.notes.push(action);
     save(state);
     return action;
   }
@@ -257,7 +278,9 @@ export function updatePnlAndCheckExits(position_address, currentPnlPct, config) 
       const dropFromPeak = pos.peak_pnl_pct - currentPnlPct;
       if (dropFromPeak >= mgmt.trailingDropPct) {
         action = `TRAILING_TP: PnL dropped ${dropFromPeak.toFixed(1)}% from peak ${pos.peak_pnl_pct.toFixed(1)}% (trail: ${mgmt.trailingDropPct}%)`;
-        pos.notes.push(action);
+        // Only add note if not already triggered (prevent spam on repeated ticks)
+        const alreadyTriggered = pos.notes.some(n => n.startsWith("TRAILING_TP:"));
+        if (!alreadyTriggered) pos.notes.push(action);
         save(state);
         return action;
       }
@@ -295,10 +318,17 @@ export function getStateSummary() {
   const totalFeesClaimed = Object.values(state.positions)
     .reduce((sum, p) => sum + (p.total_fees_claimed_usd || 0), 0);
 
+  // Aggregate true PnL across all closed positions that have it
+  const closedWithTruePnl = closed.filter(p => p.true_pnl_sol != null);
+  const totalTruePnlSol = closedWithTruePnl.reduce((sum, p) => sum + (p.true_pnl_sol || 0), 0);
+  const totalSolInvested = closed.reduce((sum, p) => sum + (p.sol_invested || 0), 0);
+
   return {
     open_positions: open.length,
     closed_positions: closed.length,
     total_fees_claimed_usd: Math.round(totalFeesClaimed * 100) / 100,
+    total_true_pnl_sol: closedWithTruePnl.length > 0 ? Math.round(totalTruePnlSol * 10000) / 10000 : null,
+    total_sol_invested: totalSolInvested > 0 ? Math.round(totalSolInvested * 10000) / 10000 : null,
     positions: open.map((p) => ({
       position: p.position,
       pool: p.pool,
@@ -310,6 +340,7 @@ export function getStateSummary() {
       total_fees_claimed_usd: p.total_fees_claimed_usd,
       initial_fee_tvl_24h: p.initial_fee_tvl_24h,
       rebalance_count: p.rebalance_count,
+      sol_invested: p.sol_invested || null,
       instruction: p.instruction || null,
     })),
     last_updated: state.lastUpdated,
@@ -417,6 +448,7 @@ export async function syncOpenPositions(active_addresses) {
           initial_value_usd: pos.initial_value_usd || closedData.initial_value_usd,
           actual_pnl_usd: closedData.pnl_usd,
           actual_pnl_pct: closedData.pnl_pct,
+          sol_invested: pos.sol_invested || null,
           minutes_in_range: Math.max(0, minutesHeld - minutesOOR),
           minutes_held: minutesHeld,
           close_reason: pos.oor_direction
@@ -436,8 +468,16 @@ export async function syncOpenPositions(active_addresses) {
     try {
       const baseMint = pos.base_mint;
       const SOL = "So11111111111111111111111111111111111111112";
+
+      // Snapshot wallet before swap for true PnL
+      const { getWalletBalances, swapToken } = await import("./tools/wallet.js");
+      let walletSolBeforeSwap = 0;
+      try {
+        const balPre = await getWalletBalances();
+        walletSolBeforeSwap = balPre?.sol || 0;
+      } catch { /* best-effort */ }
+
       if (baseMint && baseMint !== SOL) {
-        const { getWalletBalances, swapToken } = await import("./tools/wallet.js");
         const MAX_RETRIES = 3;
         for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
           const walletBals = await getWalletBalances();
@@ -457,6 +497,25 @@ export async function syncOpenPositions(active_addresses) {
           if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, attempt * 2000));
         }
       }
+
+      // Snapshot wallet after swap for true PnL
+      try {
+        const balPost = await getWalletBalances();
+        const walletSolAfterSwap = balPost?.sol || 0;
+        const solRecovered = Math.round((walletSolAfterSwap - walletSolBeforeSwap) * 10000) / 10000;
+        const solInvested = pos.sol_invested || 0;
+        const truePnlSol = solInvested > 0 ? Math.round((solRecovered - solInvested) * 10000) / 10000 : null;
+        pos.sol_recovered = solRecovered;
+        pos.true_pnl_sol = truePnlSol;
+        if (truePnlSol != null) {
+          log("state", `Sync-close true PnL for ${posId.slice(0, 8)}: ${truePnlSol >= 0 ? "+" : ""}${truePnlSol} SOL (invested ${solInvested}, recovered ${solRecovered})`);
+          // Backfill into lessons
+          try {
+            const { updatePerformanceTruePnl } = await import("./lessons.js");
+            updatePerformanceTruePnl(posId, { sol_recovered: solRecovered, true_pnl_sol: truePnlSol });
+          } catch { /* best-effort */ }
+        }
+      } catch { /* best-effort */ }
     } catch (swapErr) {
       log("state_warn", `Post-sync-close swap error: ${swapErr.message}`);
     }

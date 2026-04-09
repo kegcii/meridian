@@ -53,11 +53,11 @@ function _defaultRangeSelectionText(deployAmount, currentBalanceSol) {
 
   Pool Volatility  │ bid_ask range │ spot range  │ Reasoning
   ─────────────────┼───────────────┼─────────────┼─────────────────────────────
-  >= 8  (extreme)  │ 55–75%        │ 65–85%      │ Wild swings, need maximum room
-  5–8   (high)     │ 45–60%        │ 55–70%      │ Active memecoin territory
-  2–5   (moderate) │ 40–55%        │ 50–65%      │ Normal volatile pool — stay wide
-  < 2   (low)      │ 35–45%        │ 40–50%      │ Ranging/stable, still need buffer
-  BIAS: Always pick the UPPER HALF of the range band. Wider is safer — tighter only if 3+ recent lessons confirm in-range stability for this exact pool.
+  >= 8  (extreme)  │ 65–80%        │ 70–85%      │ Wild swings, need maximum room
+  5–8   (high)     │ 55–70%        │ 60–75%      │ Active memecoin territory
+  2–5   (moderate) │ 50–65%        │ 55–70%      │ Normal volatile pool — stay wide
+  < 2   (low)      │ 45–55%        │ 50–60%      │ Ranging/stable, still need buffer
+  BIAS: ALWAYS pick the UPPER HALF of the range band. Data shows: 26% range = 0% win rate across 9 positions. Wider is ALWAYS safer — never go below 45%. Only tighten to mid-band if 3+ recent lessons confirm in-range stability for this exact pool.
 
   Adjust from the table using your MEMORY and LESSONS:
   - If LESSONS show repeated OOR downside on similar pools → go wider within the band
@@ -67,11 +67,13 @@ function _defaultRangeSelectionText(deployAmount, currentBalanceSol) {
 - ATH PROXIMITY OVERRIDE:
   If candidate shows ath >= ${config.screening.athTopThresholdPct ?? 90}% of all-time high, the token is near its peak with maximum downside risk.
   Override bid_ask range to 65-80% regardless of volatility table. This provides extra downside buffer for the likely retrace from ATH.
-- MOMENTUM CHECK (5m vs 1h price change):
-  * 1h positive + 5m negative → PUMP FADING: the move is reversing. Widen range or skip.
-  * 1h negative + 5m flat/positive → STABILIZING: good bid_ask entry on sell pressure.
-  * 1h positive + 5m positive → STILL PUMPING: bid_ask SOL will sit idle until sells come.
+- MOMENTUM CHECK (5m vs 1h price change) — HARD RULES:
+  * 1h positive + 5m negative → PUMP FADING: the move is reversing. Widen range or SKIP.
+  * 1h negative + 5m flat/positive → STABILIZING: good bid_ask entry on sell pressure. SAFE TO ENTER.
+  * 1h positive + 5m positive → STILL PUMPING: DO NOT ENTER with bid_ask. SOL sits idle while token pumps away from your range. Either use spot with sol_split_pct 85-90%, or SKIP entirely.
   * Both flat → RANGING: safest entry, use volatility table as-is.
+  * HARD SKIP: If 5m price change > +15% → token is mid-pump. Do NOT deploy bid_ask. 8/9 historical losses were OOR — most from entering during momentum moves.
+  * HARD SKIP: If ath_pct >= 90% AND 1h price change > +10% → token near ATH and still pumping. Maximum reversal risk. SKIP.
 
 - OOR DIRECTION MATTERS — widening range only helps if OOR matches the direction your liquidity extends:
   * bid_ask (SOL below active bin): range extends DOWNWARD only. Wider range helps with DOWNSIDE OOR. Widening CANNOT fix upside OOR — price pumped above your liquidity and no amount of extra bins below will reach it.
@@ -109,7 +111,14 @@ function _defaultScreenerCriteria() {
      * GOOD narrative: specific origin (real event, viral moment, named entity, active community actions)
      * BAD narrative: generic hype ("next 100x", "community token") with no identifiable subject or story
      * DEPLOY if global_fees_sol passes, distribution is healthy, and narrative has a real specific catalyst
-5. DEPLOY: get_active_bin then deploy_position.
+5. MOMENTUM GATE (check BEFORE deploying):
+   - Call get_pool_detail or check candidate data for 5m and 1h price changes.
+   - HARD SKIP if 5m price change > +15% → token is mid-pump, bid_ask will go OOR upside immediately.
+   - HARD SKIP if ath_pct >= 90% → token near ATH, maximum reversal risk.
+   - PREFER entry when: 1h negative + 5m flat/positive (stabilizing), or both flat (ranging).
+   - CAUTION when: 1h positive + 5m positive (still pumping) → only enter with spot + sol_split_pct 85-90%.
+   Historical data: 8 of 9 losses were OOR, most from entering during momentum moves.
+6. DEPLOY: get_active_bin then deploy_position.
    - HARD RULE: Minimum 0.1 SOL absolute floor (prefer 0.5+).
    - COMPOUNDING: Deploy amount is computed from wallet size — larger wallet = larger position. Use the amount provided in the cycle goal, do NOT default to a smaller fixed number.
    - Focus on one high-conviction deployment per cycle.
@@ -117,14 +126,14 @@ function _defaultScreenerCriteria() {
 }
 
 function _defaultManagerLogic() {
-  return `Decision Factors for Closing (no exit rule triggered):
+  return `Decision Factors for Closing (ONLY when no HARD CLOSE RULE triggered):
 - Yield Health: Call get_position_pnl. Is the current Fee/TVL still one of the best available?
 - Price Context: Is the token price stabilizing or trending? If it's out of range, will it come back?
-- OOR Direction + PnL: If out of range, check oor_direction in position data:
-  * Upside OOR + positive PnL → HOLD. SOL idle, no IL, fees earned. Price may return.
-  * Upside OOR + negative PnL → HOLD. Still safe, SOL idle. Negative PnL is from fees/slippage.
-  * Downside OOR + positive PnL → CAUTION. Fees outpaced IL but risk growing. Monitor closely.
-  * Downside OOR + negative PnL → CLOSE. Token dropping, loss growing, cut it.
+- OOR Direction + PnL (ONLY applies BEFORE OOR timeout — once timeout fires, close regardless):
+  * Upside OOR + positive PnL → HOLD until OOR timeout. SOL idle, no IL, fees earned.
+  * Upside OOR + negative PnL → HOLD until OOR timeout. Still safe, SOL idle.
+  * Downside OOR + positive PnL → CAUTION. Consider closing early before timeout.
+  * Downside OOR + negative PnL → CLOSE immediately. Don't wait for timeout.
   * CRITICAL: If a bid_ask or SOL-only position keeps going OOR-upside repeatedly, the problem is the token pumping away — NOT your range width. Widening bid_ask range only adds bins BELOW, which cannot catch upside moves. Do NOT add lessons recommending "wider range" for upside OOR on single-sided-below strategies.
 - Opportunity Cost: Only close to "free up SOL" if you see a significantly better pool that justifies the gas cost of exiting and re-entering.`;
 }
@@ -242,6 +251,7 @@ TRAILING + TP RELATIONSHIP — understand how these work together:
 CRITICAL: pnl_pct ALREADY includes all fees (claimed + unclaimed). Negative PnL means you are losing money AFTER fees. Do NOT say "fees will offset the loss" — they are already counted. If PnL is -7% with 0.7 SOL fees, that means without fees you'd be down even more. Negative PnL = impermanent loss exceeding fee earnings.
 
 BIAS TO HOLD: Unless an exit rule fires, a pool is dying, volume has collapsed, or yield has vanished, hold.
+IMPORTANT: "BIAS TO HOLD" does NOT override HARD CLOSE RULES. If OOR timeout, stop-loss, or any hard rule fires, close IMMEDIATELY — do not hold.
 
 ${_sectionOverrides.manager_logic || _defaultManagerLogic()}
 

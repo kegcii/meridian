@@ -276,7 +276,7 @@ HARD CLOSE RULES (check in order — close immediately on first match, no furthe
 2. Position instruction exists but condition NOT met → HOLD (skip all other rules)
 3. pnl_pct >= ${config.management.takeProfitFeePct}% → CLOSE (take profit)
 4. minutes_out_of_range >= ${config.management.outOfRangeWaitMinutes} → CLOSE (OOR timeout). No exceptions — this is a hard rule regardless of OOR direction or PnL. Close and move on.
-5. fee_active_tvl_ratio < ${config.screening.minFeeActiveTvlRatio}% AND volume < $${config.screening.minVolume} → CLOSE (yield dead)
+5. fee_active_tvl_ratio < ${config.screening.minFeeActiveTvlRatio}% AND volume < $${config.screening.minVolume} → CLOSE (yield dead). IMPORTANT: Verify using 1h timeframe data before closing — a quiet 5m/15m slice on an active pool is NOT yield dead. Only close if 1h fee/TVL is also below threshold.
 6. pnl_pct <= ${config.management.emergencyPriceDropPct}% → CLOSE (emergency stop)
 
 These rules come from user-config. They are not suggestions. Do not override them.

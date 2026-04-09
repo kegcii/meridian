@@ -40,7 +40,7 @@ export async function studyTopLPers({ pool_address, limit = 4 }) {
 
   // Filter to LPers with enough data to be meaningful
   const credible = all.filter(
-    (l) => l.total_lp >= 3 && l.win_rate >= 0.6 && l.total_inflow > 1000
+    (l) => l.total_lp >= 5 && l.win_rate >= 0.65 && l.total_inflow > 2000
   );
 
   // Sort by ROI descending, take top N

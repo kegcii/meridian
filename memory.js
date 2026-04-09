@@ -157,8 +157,8 @@ export function getMemoryContext() {
     try {
       const nugget = s.get(nuggetInfo.name);
       const facts = nugget.facts();
-      // Include facts that have been recalled at least once (validated relevance)
-      const relevant = facts.filter(f => f.hits >= 1);
+      // Include all stored facts — hits filter was causing empty memory on fresh boots
+      const relevant = facts;
       if (relevant.length === 0) continue;
 
       lines.push(`[${nuggetInfo.name}]`);

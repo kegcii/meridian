@@ -107,6 +107,13 @@ export async function getTopCandidates({ limit = 10 } = {}) {
 
   let totalScreened = pools.length;
 
+  // Rank by composite score: fee yield, volume, and organic quality
+  eligible.sort((a, b) => {
+    const scoreA = (a.fee_active_tvl_ratio || 0) * 2 + Math.log10(Math.max(a.volume || 1, 1)) + (a.organic_score || 0) / 100;
+    const scoreB = (b.fee_active_tvl_ratio || 0) * 2 + Math.log10(Math.max(b.volume || 1, 1)) + (b.organic_score || 0) / 100;
+    return scoreB - scoreA;
+  });
+
   eligible = eligible.slice(0, limit);
 
   return {
@@ -263,7 +270,7 @@ function condensePool(p) {
     fee: round(p.fee),
     fee_active_tvl_ratio: p.fee_active_tvl_ratio > 0
       ? fix(p.fee_active_tvl_ratio, 4)
-      : (p.active_tvl > 0 ? fix((p.fee / p.active_tvl) * 100, 4) : 0),
+      : (p.active_tvl > 0 ? fix(p.fee / p.active_tvl, 4) : 0),  // API returns % form already — no * 100
     swap_count: p.swap_count,
     volatility: fix(p.volatility, 2),
 

@@ -11,6 +11,7 @@ import { config } from "../config.js";
 import { log } from "../logger.js";
 import {
   trackPosition,
+  updateTrackedPosition,
   markOutOfRange,
   markInRange,
   recordClaim,
@@ -19,7 +20,7 @@ import {
   minutesOutOfRange,
   syncOpenPositions,
 } from "../state.js";
-import { recordPerformance } from "../lessons.js";
+import { recordPerformance, updatePerformanceTruePnl } from "../lessons.js";
 import { getAndClearStagedSignals } from "../signal-tracker.js";
 import { normalizeMint, getWalletBalances, swapToken } from "./wallet.js";
 import { calculateBinsForPriceRange, splitRangeBins } from "../runtime-helpers.js";
@@ -312,7 +313,7 @@ export async function deployPosition({
     let studyPasses = false;
     try {
       const studyResult = await studyTopLPers({ pool_address, limit: 4 });
-      const credible = (studyResult?.lpers || []).filter(lp => lp.total_lp >= 3 && lp.win_rate >= 0.6 && lp.total_inflow >= 1000);
+      const credible = (studyResult?.lpers || []).filter(lp => lp.total_lp >= 5 && lp.win_rate >= 0.65 && lp.total_inflow >= 2000);
       const avgWR = credible.length > 0 ? credible.reduce((s, lp) => s + lp.win_rate, 0) / credible.length : 0;
       studyPasses = avgWR >= 0.80;
     } catch { /* default to false */ }
@@ -414,7 +415,7 @@ export async function deployPosition({
   if (bins_below > 0 && !price_range_pct && resolvedBinStep) {
     const stepPct = resolvedBinStep / 10000;
     const actualRangePct = (1 - Math.pow(1 + stepPct, -bins_below)) * 100;
-    const MIN_RANGE_PCT = 35; // absolute floor — no position should be narrower
+    const MIN_RANGE_PCT = 35; // absolute floor
     if (actualRangePct < MIN_RANGE_PCT) {
       const correctedBins = calculateBinsForPriceRange(resolvedBinStep, MIN_RANGE_PCT);
       log("deploy", `Range too narrow: ${bins_below} bins at bs${resolvedBinStep} = ${actualRangePct.toFixed(1)}% (min ${MIN_RANGE_PCT}%). Correcting to ${correctedBins} bins`);
@@ -460,6 +461,18 @@ export async function deployPosition({
   let activeBinsBelow = bins_below ?? config.strategy.binsBelow;
   let activeBinsAbove = bins_above ?? 0;
 
+  // Validate fallback bins also meet minimum range floor (45%)
+  if (resolvedBinStep && activeBinsBelow > 0 && !bins_above) {
+    const stepPct = resolvedBinStep / 10000;
+    const fallbackRangePct = (1 - Math.pow(1 + stepPct, -activeBinsBelow)) * 100;
+    const FLOOR_RANGE_PCT = 35;
+    if (fallbackRangePct < FLOOR_RANGE_PCT) {
+      const correctedBins = calculateBinsForPriceRange(resolvedBinStep, FLOOR_RANGE_PCT);
+      log("deploy", `Fallback range too narrow: ${activeBinsBelow} bins = ${fallbackRangePct.toFixed(1)}% (floor ${FLOOR_RANGE_PCT}%). Correcting to ${correctedBins} bins`);
+      activeBinsBelow = correctedBins;
+    }
+  }
+
   // Safety: reject tiny deploys (wastes gas, barely earns fees)
   const MIN_BINS = 20;
   let totalBins = activeBinsBelow + activeBinsAbove;
@@ -469,6 +482,13 @@ export async function deployPosition({
       error: `Rejected: total bins = ${totalBins}, minimum is ${MIN_BINS}. At bin_step ${resolvedBinStep || "?"}, ${MIN_BINS} bins ≈ ${resolvedBinStep ? (MIN_BINS * (resolvedBinStep / 10000) * 100).toFixed(0) : "?"}% range. Use calculate_bins with a target range of 25-50% and pass that bin count to bins_below.`,
     };
   }
+
+  // ─── Snapshot wallet SOL BEFORE any transactions (for true PnL) ───
+  let walletSolBefore = 0;
+  try {
+    const balBefore = await getWalletBalances();
+    walletSolBefore = balBefore?.sol || 0;
+  } catch { /* best-effort */ }
 
   if (process.env.DRY_RUN === "true") {
     const dryRunResult = {
@@ -673,6 +693,24 @@ export async function deployPosition({
           txHashes.push(txHash);
           log("deploy", `Add liquidity tx ${i + 1}/${addTxArray.length}: ${txHash}`);
         }
+        // Update pre-tracked position with sol_invested now that liquidity is added
+        try {
+          const balAfterWide = await getWalletBalances();
+          const walletSolAfterWide = balAfterWide?.sol || 0;
+          const solPriceWide = balAfterWide?.sol_price || 0;
+          if (walletSolBefore > 0) {
+            const solInvestedWide = Math.round((walletSolBefore - walletSolAfterWide) * 10000) / 10000;
+            const computedUsd = solInvestedWide > 0 && solPriceWide > 0
+              ? Math.round(solInvestedWide * solPriceWide * 100) / 100 : 0;
+            updateTrackedPosition(posAddr, {
+              sol_invested: solInvestedWide,
+              amount_sol: finalAmountY,
+              amount_x: finalAmountX,
+              initial_value_usd: computedUsd,
+            });
+            log("deploy", `Wide-range true cost: ${solInvestedWide} SOL (wallet ${walletSolBefore.toFixed(4)} → ${walletSolAfterWide.toFixed(4)})`);
+          }
+        } catch { /* best-effort */ }
       } catch (liqErr) {
         // Liquidity add failed — position exists on-chain but is empty.
         // Mark it as closed so it doesn't count toward maxPositions or get managed.
@@ -701,6 +739,24 @@ export async function deployPosition({
 
     log("deploy", `SUCCESS — ${txHashes.length} tx(s): ${txHashes[0]}`);
 
+    // ─── Snapshot wallet SOL AFTER all transactions (for true PnL) ───
+    let solInvested = totalSolAmount; // fallback: nominal amount
+    let solPriceAtDeploy = 0;
+    try {
+      const balAfter = await getWalletBalances();
+      const walletSolAfter = balAfter?.sol || 0;
+      solPriceAtDeploy = balAfter?.sol_price || 0;
+      if (walletSolBefore > 0) {
+        solInvested = Math.round((walletSolBefore - walletSolAfter) * 10000) / 10000;
+        log("deploy", `True cost: ${solInvested} SOL (wallet ${walletSolBefore.toFixed(4)} → ${walletSolAfter.toFixed(4)})`);
+      }
+    } catch { /* best-effort — use nominal amount */ }
+
+    // Calculate initial_value_usd from actual SOL spent if not provided
+    const computedInitialValueUsd = initial_value_usd || (solInvested > 0 && solPriceAtDeploy > 0
+      ? Math.round(solInvested * solPriceAtDeploy * 100) / 100
+      : 0);
+
     _positionsCacheAt = 0;
     const signal_snapshot = getAndClearStagedSignals(pool_address);
     trackPosition({
@@ -719,7 +775,8 @@ export async function deployPosition({
       amount_sol: finalAmountY,
       amount_x: finalAmountX,
       active_bin: activeBin.binId,
-      initial_value_usd,
+      initial_value_usd: computedInitialValueUsd,
+      sol_invested: solInvested,
       study_avg_hold_hours,
       signal_snapshot,
     });
@@ -733,6 +790,7 @@ export async function deployPosition({
       wide_range: isWideRange,
       amount_x: finalAmountX,
       amount_y: finalAmountY,
+      sol_invested: solInvested,
       txs: txHashes,
     };
   } catch (error) {
@@ -1243,6 +1301,7 @@ export async function getMyPositions({ force = false } = {}) {
         pnl_pct: Math.round(pnlPct * 100) / 100,
         sol_price: solPrice,
         pnl_unit: config.management.pnlUnit,
+        sol_invested: trackedFinal?.sol_invested || null,
         age_minutes: ageMinutes,
         minutes_out_of_range: minutesOutOfRange(r.position),
         study_avg_hold_hours: trackedFinal?.study_avg_hold_hours || null,
@@ -1501,6 +1560,9 @@ export async function closePosition({ position_address, _pnlOverride = null }) {
         log("close", `initial_value_usd missing for ${position_address}, using finalValueUsd ($${finalValueUsd}) as fallback`);
       }
 
+      // Stash sol_invested for true PnL calculation after swap
+      const _solInvested = tracked.sol_invested || null;
+
       await recordPerformance({
         position: position_address,
         pool: poolAddress,
@@ -1519,6 +1581,7 @@ export async function closePosition({ position_address, _pnlOverride = null }) {
         initial_value_usd: initialUsd,
         actual_pnl_usd: pnlUsd,
         actual_pnl_pct: pnlPct,
+        sol_invested: _solInvested,
         minutes_in_range: minutesHeld - minutesOOR,
         minutes_held: minutesHeld,
         close_reason: closeReason,
@@ -1532,38 +1595,79 @@ export async function closePosition({ position_address, _pnlOverride = null }) {
         forgetPositionSnapshot(tracked);
       } catch { /* best-effort */ }
 
-      // ─── Hard rule: always swap base token back to SOL after close (non-blocking, with retry) ───
+      // ─── Hard rule: always swap base token back to SOL after close (AWAITED for true PnL) ───
       const baseMint = tracked.base_mint;
       const SOL = "So11111111111111111111111111111111111111112";
+
+      // Snapshot wallet BEFORE swap so we can measure true recovery
+      let walletSolBeforeSwap = 0;
+      try {
+        const balPre = await getWalletBalances();
+        walletSolBeforeSwap = balPre?.sol || 0;
+      } catch { /* best-effort */ }
+
       if (baseMint && baseMint !== SOL) {
-        (async () => {
-          const MAX_RETRIES = 3;
-          for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-            try {
-              const walletBals = await getWalletBalances();
-              const baseToken = walletBals.tokens?.find((t) => t.mint === baseMint);
-              if (!baseToken || baseToken.balance <= 0 || (baseToken.usd ?? 0) < 0.10) break;
-              log("close", `Auto-swapping ${baseToken.balance} ${baseToken.symbol || baseMint.slice(0, 8)} -> SOL (worth $${baseToken.usd})${attempt > 1 ? ` [retry ${attempt}/${MAX_RETRIES}]` : ""}`);
-              const swapResult = await swapToken({
-                input_mint: baseMint,
-                output_mint: SOL,
-                amount: baseToken.balance,
-              });
-              if (swapResult?.success || swapResult?.dry_run) {
-                log("close", `Post-close swap OK: tx ${swapResult.tx || "dry-run"}`);
-                break;
-              }
-              log("close_warn", `Post-close swap failed: ${swapResult?.error || "unknown"} [attempt ${attempt}/${MAX_RETRIES}]`);
-              if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, attempt * 2000));
-            } catch (swapErr) {
-              log("close_warn", `Post-close swap error: ${swapErr.message} [attempt ${attempt}/${MAX_RETRIES}]`);
-              if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, attempt * 2000));
+        const MAX_RETRIES = 3;
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+          try {
+            const walletBals = await getWalletBalances();
+            const baseToken = walletBals.tokens?.find((t) => t.mint === baseMint);
+            if (!baseToken || baseToken.balance <= 0 || (baseToken.usd ?? 0) < 0.10) break;
+            log("close", `Auto-swapping ${baseToken.balance} ${baseToken.symbol || baseMint.slice(0, 8)} -> SOL (worth $${baseToken.usd})${attempt > 1 ? ` [retry ${attempt}/${MAX_RETRIES}]` : ""}`);
+            const swapResult = await swapToken({
+              input_mint: baseMint,
+              output_mint: SOL,
+              amount: baseToken.balance,
+            });
+            if (swapResult?.success || swapResult?.dry_run) {
+              log("close", `Post-close swap OK: tx ${swapResult.tx || "dry-run"}`);
+              break;
             }
+            log("close_warn", `Post-close swap failed: ${swapResult?.error || "unknown"} [attempt ${attempt}/${MAX_RETRIES}]`);
+            if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, attempt * 2000));
+          } catch (swapErr) {
+            log("close_warn", `Post-close swap error: ${swapErr.message} [attempt ${attempt}/${MAX_RETRIES}]`);
+            if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, attempt * 2000));
           }
-        })().catch(err => log("close_warn", `Post-close swap unhandled: ${err.message}`));
+        }
       }
 
-      return { success: true, position: position_address, pool: poolAddress, txs: txHashes, pnl_usd: pnlUsd, pnl_pct: pnlPct };
+      // ─── Snapshot wallet AFTER everything to compute true PnL ───
+      let solRecovered = 0;
+      let truePnlSol = null;
+      try {
+        const balPost = await getWalletBalances();
+        const walletSolAfterClose = balPost?.sol || 0;
+        // sol_recovered = how much SOL came back from this close (wallet delta)
+        solRecovered = Math.round((walletSolAfterClose - walletSolBeforeSwap) * 10000) / 10000;
+
+        const solInvested = tracked.sol_invested || tracked.amount_sol || 0;
+        if (solInvested > 0) {
+          truePnlSol = Math.round((solRecovered - solInvested) * 10000) / 10000;
+          log("close", `True PnL: ${truePnlSol >= 0 ? "+" : ""}${truePnlSol} SOL (invested ${solInvested}, recovered ${solRecovered}, wallet ${walletSolBeforeSwap.toFixed(4)} → ${walletSolAfterClose.toFixed(4)})`);
+        } else {
+          log("close", `SOL recovered: ${solRecovered} (no sol_invested recorded — legacy position)`);
+        }
+
+        updateTrackedPosition(position_address, {
+          sol_recovered: solRecovered,
+          true_pnl_sol: truePnlSol,
+        });
+        // Backfill true PnL into lessons (recordPerformance was called before swap)
+        if (truePnlSol != null) {
+          updatePerformanceTruePnl(position_address, { sol_recovered: solRecovered, true_pnl_sol: truePnlSol });
+        }
+      } catch (snapErr) {
+        log("close_warn", `Post-close wallet snapshot failed: ${snapErr.message}`);
+      }
+
+      return {
+        success: true, position: position_address, pool: poolAddress, txs: txHashes,
+        pnl_usd: pnlUsd, pnl_pct: pnlPct,
+        sol_invested: tracked.sol_invested || null,
+        sol_recovered: solRecovered,
+        true_pnl_sol: truePnlSol,
+      };
     }
 
     return { success: true, position: position_address, pool: poolAddress, txs: txHashes };

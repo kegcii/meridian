@@ -450,7 +450,8 @@ export function startServer(timersFn) {
             const status = p.in_range ? "in-range" : "OUT OF RANGE";
             const fees = unit === "sol" ? `${p.unclaimed_fees_sol ?? "?"} SOL` : `$${p.unclaimed_fees_usd}`;
             const pnl = unit === "sol" ? `${p.pnl_sol ?? "?"} SOL` : `$${p.pnl_usd}`;
-            lines.push(`  ${p.pair} — ${status} | fees: ${fees} | pnl: ${pnl} (${p.pnl_pct}%)`);
+            const invested = p.sol_invested ? ` | invested: ${p.sol_invested} SOL` : "";
+            lines.push(`  ${p.pair} — ${status} | fees: ${fees} | pnl: ${pnl} (${p.pnl_pct}%)${invested}`);
           }
           wsSend(ws, {
             type: "chat:response",

@@ -49,6 +49,24 @@ function save(data) {
   fs.writeFileSync(LESSONS_FILE, JSON.stringify(data, null, 2));
 }
 
+/**
+ * Backfill true PnL fields on the most recent performance entry for a position.
+ * Called after post-close swap completes (swap happens after recordPerformance).
+ */
+export function updatePerformanceTruePnl(position_address, { sol_recovered, true_pnl_sol }) {
+  const data = load();
+  // Find the last performance entry for this position
+  for (let i = data.performance.length - 1; i >= 0; i--) {
+    if (data.performance[i].position === position_address) {
+      data.performance[i].sol_recovered = sol_recovered;
+      data.performance[i].true_pnl_sol = true_pnl_sol;
+      save(data);
+      log("lessons", `Backfilled true PnL for ${position_address.slice(0, 8)}: recovered ${sol_recovered} SOL, true PnL ${true_pnl_sol >= 0 ? "+" : ""}${true_pnl_sol} SOL`);
+      return;
+    }
+  }
+}
+
 // ─── Record Position Performance ──────────────────────────────
 
 /**
@@ -93,6 +111,10 @@ export async function recordPerformance(perf) {
     pnl_usd: Math.round(pnl_usd * 100) / 100,
     pnl_pct: Math.round(pnl_pct * 100) / 100,
     range_efficiency: Math.round(range_efficiency * 10) / 10,
+    // True PnL from wallet snapshots (captures swap slippage, tx fees, rent)
+    sol_invested: perf.sol_invested ?? null,
+    sol_recovered: perf.sol_recovered ?? null,
+    true_pnl_sol: perf.true_pnl_sol ?? null,
     recorded_at: new Date().toISOString(),
   };
 
@@ -120,6 +142,8 @@ export async function recordPerformance(perf) {
   }
 
   save(data);
+
+  log("lessons", `Recorded performance for ${perf.pool_name}: API PnL ${entry.pnl_pct}%${entry.true_pnl_sol != null ? `, true PnL ${entry.true_pnl_sol >= 0 ? "+" : ""}${entry.true_pnl_sol} SOL` : ""}`);
 
   // Update pool-level memory
   if (perf.pool) {
@@ -1011,12 +1035,16 @@ export function getLessonsForPrompt(opts = {}) {
 
   roleMatched.forEach((l) => usedIds.add(l.id));
 
-  // Tier 3: Recent fill
+  // Tier 3: Recent fill — prioritize actionable outcomes (bad/good) over neutral, then by recency
   const remainingBudget = RECENT_CAP - pinned.length - roleMatched.length;
   const recent = remainingBudget > 0
     ? data.lessons
         .filter((l) => !usedIds.has(l.id))
-        .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
+        .sort((a, b) => {
+          const priDiff = (outcomePriority[a.outcome] ?? 3) - (outcomePriority[b.outcome] ?? 3);
+          if (priDiff !== 0) return priDiff;
+          return (b.created_at || "").localeCompare(a.created_at || "");
+        })
         .slice(0, remainingBudget)
     : [];
 

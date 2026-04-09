@@ -8,7 +8,7 @@
 
 import { log } from "./logger.js";
 import { config } from "./config.js";
-import { updatePnlAndCheckExits, getTrackedPosition, getTrackedPositions } from "./state.js";
+import { updatePnlAndCheckExits, getTrackedPosition, getTrackedPositions, minutesOutOfRange } from "./state.js";
 import { getMyPositions, closePosition } from "./tools/dlmm.js";
 import { emit } from "./notifier.js";
 import { isBusy, isManagementBusy, isScreeningBusy } from "./session.js";
@@ -19,6 +19,8 @@ const STATE_FILE = "./state.json";
 let _intervalHandle = null;
 // Positions successfully closed this session — skip until gone from on-chain
 const _closingPositions = new Set();
+// Track close retry attempts per position for escalation
+const _closeRetries = new Map(); // position_address -> { count, lastAttempt }
 
 function loadState() {
   if (!fs.existsSync(STATE_FILE)) {
@@ -74,13 +76,33 @@ export async function runPnlWatcher() {
           config.management.takeProfitFeePct &&
           p.pnl_pct >= config.management.takeProfitFeePct;
 
+        // OOR auto-close: deterministic, no LLM needed
+        const oorTimeout = config.management.outOfRangeWaitMinutes;
+        const oorMinutes = minutesOutOfRange(p.position);
+        const oorHit = !exitAction && !fixedTpHit && oorTimeout && oorMinutes >= oorTimeout && !p.in_range;
+
         const reason = exitAction || (fixedTpHit
           ? `FIXED_TP: PnL ${p.pnl_pct.toFixed(1)}% >= take profit (${config.management.takeProfitFeePct}%)`
-          : null);
+          : oorHit
+            ? `OOR_TIMEOUT: Out of range ${oorMinutes}min >= ${oorTimeout}min (${tracked?.oor_direction || "unknown"} direction, PnL ${p.pnl_pct?.toFixed(1)}%)`
+            : null);
 
         if (!reason) continue;
 
-        log("pnl_watcher", `EXIT TRIGGERED for ${p.pair || p.position.slice(0, 8)}: ${reason}`);
+        // Track retry state for this position
+        const retryState = _closeRetries.get(p.position) || { count: 0, lastAttempt: 0 };
+
+        // Back off slightly between retries: wait at least (count * 10s) between attempts
+        const backoffMs = Math.min(retryState.count * 10_000, 120_000);
+        if (Date.now() - retryState.lastAttempt < backoffMs) continue;
+
+        const retryLabel = retryState.count > 0 ? ` [retry ${retryState.count}]` : "";
+        log("pnl_watcher", `EXIT TRIGGERED for ${p.pair || p.position.slice(0, 8)}: ${reason}${retryLabel}`);
+
+        // Use configured priority fee level for all attempts (no escalation)
+        const escalatedFeeLevel = config.management.priorityFeeLevel || "Medium";
+        const origFeeLevel = config.management.priorityFeeLevel;
+        config.management.priorityFeeLevel = escalatedFeeLevel;
 
         const closeResult = await closePosition({
           position_address: p.position,
@@ -93,13 +115,23 @@ export async function runPnlWatcher() {
           },
         });
 
+        // Restore original fee level
+        config.management.priorityFeeLevel = origFeeLevel;
+
         if (!closeResult?.success && !closeResult?.dry_run) {
-          log("pnl_watcher_error", `Failed to close ${p.position.slice(0, 8)}: ${closeResult?.error || "unknown error"}`);
+          retryState.count++;
+          retryState.lastAttempt = Date.now();
+          _closeRetries.set(p.position, retryState);
+          log("pnl_watcher_error", `Failed to close ${p.position.slice(0, 8)} (attempt ${retryState.count}): ${closeResult?.error || "unknown error"}`);
           continue;
         }
 
+        // Close succeeded — clean up retry tracking
+        _closeRetries.delete(p.position);
+
         _closingPositions.add(p.position);
-        log("pnl_watcher", `Closed ${p.pair || p.position.slice(0, 8)} | PnL: ${p.pnl_pct}% ($${p.pnl_usd})`);
+        const truePnl = closeResult?.true_pnl_sol != null ? ` | true: ${closeResult.true_pnl_sol >= 0 ? "+" : ""}${closeResult.true_pnl_sol} SOL` : "";
+        log("pnl_watcher", `Closed ${p.pair || p.position.slice(0, 8)} | PnL: ${p.pnl_pct}% ($${p.pnl_usd})${truePnl}`);
 
         try {
           const state = loadState();
@@ -109,6 +141,7 @@ export async function runPnlWatcher() {
             pair: p.pair,
             reason,
             pnl_pct: p.pnl_pct,
+            true_pnl_sol: closeResult?.true_pnl_sol ?? null,
             ts: new Date().toISOString(),
           });
           state.recentAutoCloses = state.recentAutoCloses.slice(-20);
@@ -122,6 +155,9 @@ export async function runPnlWatcher() {
           pnlPct: p.pnl_pct,
           pnlSol: p.pnl_sol,
           pnlUsd: p.pnl_usd,
+          truePnlSol: closeResult?.true_pnl_sol ?? null,
+          solInvested: closeResult?.sol_invested ?? null,
+          solRecovered: closeResult?.sol_recovered ?? null,
           autoClose: true,
           reason,
         });

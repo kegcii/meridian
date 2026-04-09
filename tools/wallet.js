@@ -217,34 +217,43 @@ export async function swapToken({
 }
 
 async function swapViaQuoteApi({ wallet, connection, input_mint, output_mint, amountStr }) {
-  // ─── Get quote ─────────────────────────────────────────────
-  const quoteRes = await fetch(
-    `${JUPITER_QUOTE_API}/quote?inputMint=${input_mint}&outputMint=${output_mint}&amount=${amountStr}&slippageBps=300`,
-    { headers: { "x-api-key": JUPITER_API_KEY } }
-  );
-  if (!quoteRes.ok) throw new Error(`Quote failed: ${quoteRes.status} ${await quoteRes.text()}`);
-  const quote = await quoteRes.json();
-  if (quote.error) throw new Error(`Quote error: ${quote.error}`);
+  // Escalating slippage: start tight, widen on retry (100 → 200 → 300 bps)
+  const slippageLevels = [100, 200, 300];
 
-  // ─── Get swap tx ───────────────────────────────────────────
-  const swapRes = await fetch(`${JUPITER_QUOTE_API}/swap`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": JUPITER_API_KEY },
-    body: JSON.stringify({
-      quoteResponse: quote,
-      userPublicKey: wallet.publicKey.toString(),
-      wrapAndUnwrapSol: true,
-    }),
-  });
-  if (!swapRes.ok) throw new Error(`Swap tx failed: ${swapRes.status} ${await swapRes.text()}`);
-  const { swapTransaction } = await swapRes.json();
+  for (let i = 0; i < slippageLevels.length; i++) {
+    const bps = slippageLevels[i];
+    try {
+      const quoteRes = await fetch(
+        `${JUPITER_QUOTE_API}/quote?inputMint=${input_mint}&outputMint=${output_mint}&amount=${amountStr}&slippageBps=${bps}`,
+        { headers: { "x-api-key": JUPITER_API_KEY } }
+      );
+      if (!quoteRes.ok) throw new Error(`Quote failed: ${quoteRes.status} ${await quoteRes.text()}`);
+      const quote = await quoteRes.json();
+      if (quote.error) throw new Error(`Quote error: ${quote.error}`);
 
-  // ─── Sign and send ─────────────────────────────────────────
-  const tx = VersionedTransaction.deserialize(Buffer.from(swapTransaction, "base64"));
-  tx.sign([wallet]);
-  const txHash = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
-  await connection.confirmTransaction(txHash, "confirmed");
+      const swapRes = await fetch(`${JUPITER_QUOTE_API}/swap`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": JUPITER_API_KEY },
+        body: JSON.stringify({
+          quoteResponse: quote,
+          userPublicKey: wallet.publicKey.toString(),
+          wrapAndUnwrapSol: true,
+        }),
+      });
+      if (!swapRes.ok) throw new Error(`Swap tx failed: ${swapRes.status} ${await swapRes.text()}`);
+      const { swapTransaction } = await swapRes.json();
 
-  log("swap", `SUCCESS (fallback) tx: ${txHash}`);
-  return { success: true, tx: txHash, input_mint, output_mint };
+      const tx = VersionedTransaction.deserialize(Buffer.from(swapTransaction, "base64"));
+      tx.sign([wallet]);
+      const txHash = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
+      await connection.confirmTransaction(txHash, "confirmed");
+
+      log("swap", `SUCCESS (fallback, ${bps}bps) tx: ${txHash}`);
+      return { success: true, tx: txHash, input_mint, output_mint };
+    } catch (err) {
+      log("swap_warn", `Fallback swap failed at ${bps}bps: ${err.message}`);
+      if (i === slippageLevels.length - 1) throw err;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
 }
