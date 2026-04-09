@@ -99,11 +99,6 @@ export async function runPnlWatcher() {
         const retryLabel = retryState.count > 0 ? ` [retry ${retryState.count}]` : "";
         log("pnl_watcher", `EXIT TRIGGERED for ${p.pair || p.position.slice(0, 8)}: ${reason}${retryLabel}`);
 
-        // Use configured priority fee level for all attempts (no escalation)
-        const escalatedFeeLevel = config.management.priorityFeeLevel || "Medium";
-        const origFeeLevel = config.management.priorityFeeLevel;
-        config.management.priorityFeeLevel = escalatedFeeLevel;
-
         const closeResult = await closePosition({
           position_address: p.position,
           _pnlOverride: {
@@ -114,9 +109,6 @@ export async function runPnlWatcher() {
             unclaimed_fees_usd: p.unclaimed_fees_usd,
           },
         });
-
-        // Restore original fee level
-        config.management.priorityFeeLevel = origFeeLevel;
 
         if (!closeResult?.success && !closeResult?.dry_run) {
           retryState.count++;

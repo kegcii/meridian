@@ -436,8 +436,6 @@ export function runClaudeCli(model, prompt, {
           // Detect rate limit and set cooldown
           if (msg.includes("hit your limit") || msg.includes("resets")) {
             _claudeRateLimitedUntil = parseRateLimitReset(msg);
-            const mins = Math.ceil((_claudeRateLimitedUntil - Date.now()) / 60000);
-            log("claude", `Rate limited — cooldown set for ~${mins} minutes`);
           }
           reject(new Error(msg || "Claude CLI returned an error"));
         } else if (parsed.type === "result") {

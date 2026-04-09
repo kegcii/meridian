@@ -280,7 +280,6 @@ export async function deployPosition({
   // Override with the computed amount based on wallet balance + positionSizePct.
   try {
     const { computeDeployAmount } = await import("../config.js");
-    const { getWalletBalances } = await import("./wallet.js");
     const bal = await getWalletBalances();
     if (bal?.sol > 0) {
       const computed = computeDeployAmount(bal.sol);
@@ -577,7 +576,7 @@ export async function deployPosition({
         log("deploy", `WARNING: Auto-swap failed (${swapResult.error}), falling back to SOL-only deployment`);
         // Fall back: keep original amounts, revert to the full SOL-only range.
         activeBinsAbove = 0;
-        activeBinsBelow = totalRangeBins ?? bins_below ?? config.strategy.binsBelow;
+        activeBinsBelow = bins_below ?? config.strategy.binsBelow;
         totalBins = activeBinsBelow + activeBinsAbove;
         if (totalBins < MIN_BINS) {
           return {
@@ -590,7 +589,7 @@ export async function deployPosition({
       log("deploy", `WARNING: Auto-swap error (${swapErr.message}), falling back to SOL-only deployment`);
       // Fall back: keep original amounts, revert to the full SOL-only range.
       activeBinsAbove = 0;
-      activeBinsBelow = totalRangeBins ?? bins_below ?? config.strategy.binsBelow;
+      activeBinsBelow = bins_below ?? config.strategy.binsBelow;
       totalBins = activeBinsBelow + activeBinsAbove;
       if (totalBins < MIN_BINS) {
         return {
@@ -1504,7 +1503,7 @@ export async function closePosition({ position_address, _pnlOverride = null }) {
           pnlUsd        = freshPnl.pnl_usd   ?? 0;
           pnlPct        = freshPnl.pnl_pct   ?? 0;
           finalValueUsd = freshPnl.current_value_usd ?? 0;
-          feesUsd       = (freshPnl.all_time_fees_usd || 0) + (freshPnl.unclaimed_fee_usd || 0);
+          feesUsd       = (freshPnl.all_time_fees_usd || 0) + (freshPnl.unclaimed_fees_usd || 0);
         }
       } catch (e) {
         log("close_warn", `Could not snapshot PnL before close: ${e.message}`);
