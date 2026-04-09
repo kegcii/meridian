@@ -31,6 +31,9 @@ import { kbRead, kbWrite, kbSearch, kbList, kbDelete, kbMigrate, kbGetStats, kbR
 let _cronRestarter = null;
 export function registerCronRestarter(fn) { _cronRestarter = fn; }
 
+// Track config change history for cooldown + oscillation detection (in-memory, resets on restart)
+const _configChangeHistory = new Map();
+
 // Map tool names to implementations
 const toolMap = {
   discover_pools: discoverPools,
@@ -184,6 +187,25 @@ const toolMap = {
       }
     }
 
+    // ── Cooldown: reject non-interval keys changed within last 30 minutes ──
+    const COOLDOWN_MS = 30 * 60 * 1000;
+    const INTERVAL_KEYS = new Set(["managementIntervalMin", "screeningIntervalMin", "pnlWatcherIntervalSec"]);
+    const now = Date.now();
+    const cooledDown = {};
+    for (const key of Object.keys(changes)) {
+      if (INTERVAL_KEYS.has(key)) continue; // intervals exempt (change every deploy)
+      const lastChange = _configChangeHistory.get(key);
+      if (lastChange && (now - lastChange.timestamp) < COOLDOWN_MS) {
+        const minsAgo = Math.round((now - lastChange.timestamp) / 60_000);
+        cooledDown[key] = `changed ${minsAgo}m ago (cooldown: 30m). Previous: ${lastChange.from} → ${lastChange.to}`;
+        delete changes[key];
+      }
+    }
+
+    if (Object.keys(changes).length === 0) {
+      return { success: false, reason: "All keys on cooldown", cooldown: cooledDown };
+    }
+
     const result = applyConfigChanges({ changes, source: "agent", reason });
 
     if (!result.success) {
@@ -191,7 +213,18 @@ const toolMap = {
       return { success: false, unknown, reason };
     }
 
-    const { applied } = result;
+    const { applied, normalized } = result;
+
+    // ── Track change history for cooldown + oscillation detection ──
+    const clamped = {};
+    for (const [key, finalVal] of Object.entries(applied)) {
+      const requestedVal = changes[key];
+      if (requestedVal !== undefined && requestedVal !== finalVal) {
+        clamped[key] = { requested: requestedVal, clamped_to: finalVal };
+      }
+      const prevVal = _configChangeHistory.get(key)?.to;
+      _configChangeHistory.set(key, { from: prevVal ?? requestedVal, to: finalVal, timestamp: now });
+    }
 
     // Restart cron jobs if intervals changed
     const intervalChanged = applied.managementIntervalMin != null || applied.screeningIntervalMin != null || applied.pnlWatcherIntervalSec != null;
@@ -203,9 +236,7 @@ const toolMap = {
     // Save as a lesson — but skip ephemeral per-deploy interval changes
     // (managementIntervalMin / screeningIntervalMin change every deploy based on volatility;
     //  the rule is already in the system prompt, storing it 75+ times is pure noise)
-    const lessonsKeys = Object.keys(applied).filter(
-      k => k !== "managementIntervalMin" && k !== "screeningIntervalMin" && k !== "pnlWatcherIntervalSec"
-    );
+    const lessonsKeys = Object.keys(applied).filter(k => !INTERVAL_KEYS.has(k));
     if (lessonsKeys.length > 0) {
       const summary = lessonsKeys.map(k => `${k}=${applied[k]}`).join(", ");
       addLesson(`[SELF-TUNED] Changed ${summary} — ${reason}`, ["self_tune", "config_change"]);
@@ -213,7 +244,12 @@ const toolMap = {
 
     const unknown = result.rejected?.unknown ? Object.keys(result.rejected.unknown) : [];
     log("config", `Agent self-tuned: ${JSON.stringify(applied)} — ${reason}`);
-    return { success: true, applied, unknown, reason };
+
+    // Return full feedback including clamping info and cooldown rejections
+    const response = { success: true, applied, unknown, reason };
+    if (Object.keys(clamped).length > 0) response.clamped = clamped;
+    if (Object.keys(cooledDown).length > 0) response.cooldown = cooledDown;
+    return response;
   },
 };
 

@@ -435,6 +435,7 @@ WARNING: This executes a real on-chain transaction.`,
 Changes persist to user-config.json and take effect immediately — no restart needed.
 
 You can change anything: screening thresholds, management rules, deploy amounts, cron intervals, strategy params, LLM settings.
+Values are auto-clamped to safe bounds. Key bounds: minBinStep [25–200], binsBelow [10–69], minTvl [100–500k], maxVolatility [2–30], stopLossPct [-50 to -3].
 
 Examples:
 - { takeProfitFeePct: 8 }        — raise take profit target for hot markets
@@ -443,7 +444,7 @@ Examples:
 - { deployAmountSol: 0.5 }       — deploy more per position
 - { timeframe: "1h" }            — switch screening timeframe
 - { maxTvl: 50000 }              — tighter TVL cap
-- { binsBelow: 50 }              — narrower bin range
+- { binsBelow: 50 }              — narrower bin range (max 69 = program limit)
 - { maxPositions: 5 }            — allow more concurrent positions
 - { managementModel: "gpt-4o" }               — switch management cycle model (also: "openai/gpt-5.4-nano")
 - { screeningModel: "gpt-4o" }                — switch screening cycle model (also: "openai/gpt-5.4-nano")

@@ -259,6 +259,7 @@ IMPORTANT: Do NOT call get_top_candidates or study_top_lpers while you have heal
 After ANY close: check wallet for base tokens and swap ALL to SOL immediately.
 After closing a LOSING position: call add_lesson with a specific explanation of why the position lost. Include what signal you missed and what to do differently. Generic stats-only lessons are not useful.
 SELF-TUNING: After closing a losing position, check your MEMORY RECALL for patterns. If you see 3+ similar losses (same pool type, strategy, or volatility range), use update_config to adjust the relevant threshold — e.g., tighten maxVolatility, raise minOrganic, adjust stopLossPct. Only change thresholds you have evidence for.
+SELF-TUNING GUARDRAILS: Do NOT set minBinStep below 25 (enters micro-step pools with tiny fee/TVL). Do NOT set binsBelow above 69 (program max, and high values spread liquidity too thin = slow fee printing). Values are auto-clamped to safe bounds.
 `;
   } else {
     prompt += `Role: GENERAL

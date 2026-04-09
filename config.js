@@ -193,6 +193,29 @@ const ATLAS_DISALLOWED = new Set([
   "pnlWatcherIntervalSec",
 ]);
 
+// Bounds for agent-tunable keys: [min, max]
+// Prevents the LLM from setting extreme values that degrade performance
+const VALUE_BOUNDS = {
+  minBinStep:        [20, 150],
+  maxBinStep:        [80, 150],
+  binsBelow:         [10, 100],
+  minTvl:            [300, 30_000],
+  maxTvl:            [120_000, 200_000],
+  minVolume:         [300, 100_000],
+  minOrganic:        [60, 70],
+  minHolders:        [120, 10_000],
+  minFeeActiveTvlRatio: [0.07, 0.4],
+  maxVolatility:     [8, 30],
+  stopLossPct:       [-50, -3],
+  takeProfitFeePct:  [1, 50],
+  trailingTriggerPct: [0.5, 20],
+  trailingDropPct:   [0.5, 10],
+  managementIntervalMin: [3, 15],
+  screeningIntervalMin:  [5, 30],
+  maxPositions:      [1, 5],
+  deployAmountSol:   [0.2, 10],
+};
+
 // Keys whose values should be rounded to the nearest integer
 const INTEGER_KEYS = new Set([
   "minTvl", "maxTvl", "minVolume", "minOrganic", "minHolders",
@@ -246,6 +269,16 @@ export function applyConfigChanges({ changes = {}, source = "manual", reason = "
     let final = value;
     if (INTEGER_KEYS.has(key) && typeof value === "number") {
       final = Math.round(value);
+    }
+
+    // Clamp to bounds if defined
+    const bounds = VALUE_BOUNDS[key];
+    if (bounds && typeof final === "number") {
+      const clamped = Math.max(bounds[0], Math.min(bounds[1], final));
+      if (clamped !== final) {
+        console.log(`[config] Clamped ${key}: ${final} → ${clamped} (bounds: ${bounds[0]}–${bounds[1]})`);
+        final = clamped;
+      }
     }
 
     config[section][key] = final;
