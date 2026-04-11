@@ -229,20 +229,22 @@ async function sweepLeftoverTokens() {
   }
 }
 
-const HIGH_VOL_THRESHOLD = 5;
-const FAST_INTERVAL_SEC = 15;
 let _currentIntervalSec = null;
 let _baseIntervalSec = 30;
 
 /**
- * If any open position has volatility ≥5, tick every 15s instead of 30s.
- * High-vol tokens can move 10%+ between normal ticks, outrunning stop-loss.
+ * If any open position has volatility ≥ threshold, tick faster.
+ * Both threshold and fast interval are configurable via user-config.json:
+ *   pnlWatcherHighVolThreshold (default 5)
+ *   pnlWatcherFastIntervalSec (default 15)
  */
 function chooseInterval() {
   try {
+    const highVolThreshold = config.schedule?.pnlWatcherHighVolThreshold ?? 5;
+    const fastSec = config.schedule?.pnlWatcherFastIntervalSec ?? 15;
     const open = getTrackedPositions(true);
-    const hasHighVol = open.some((p) => (p.volatility ?? 0) >= HIGH_VOL_THRESHOLD);
-    return hasHighVol ? FAST_INTERVAL_SEC : _baseIntervalSec;
+    const hasHighVol = open.some((p) => (p.volatility ?? 0) >= highVolThreshold);
+    return hasHighVol ? fastSec : _baseIntervalSec;
   } catch {
     return _baseIntervalSec;
   }
@@ -271,7 +273,9 @@ export function startPnlWatcher(intervalSec = 30) {
   }
 
   _baseIntervalSec = intervalSec;
-  log("pnl_watcher", `Starting PnL watcher (base ${intervalSec}s, fast ${FAST_INTERVAL_SEC}s for vol≥${HIGH_VOL_THRESHOLD})`);
+  const fastSec = config.schedule?.pnlWatcherFastIntervalSec ?? 15;
+  const highVolThreshold = config.schedule?.pnlWatcherHighVolThreshold ?? 5;
+  log("pnl_watcher", `Starting PnL watcher (base ${intervalSec}s, fast ${fastSec}s for vol≥${highVolThreshold})`);
 
   runPnlWatcher();
   scheduleNextTick();

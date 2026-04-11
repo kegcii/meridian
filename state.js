@@ -249,10 +249,10 @@ export function updatePnlAndCheckExits(position_address, currentPnlPct, config) 
   const mgmt = config.management;
   let action = null;
 
-  // Emergency floor: non-configurable tail-loss catcher. Even if user misconfigures
-  // stopLossPct (null, or set too loose), anything past -30% is an outlier that
-  // screams "exit now" — fires before any user stop-loss logic.
-  const EMERGENCY_FLOOR_PCT = -30;
+  // Emergency floor: tail-loss catcher that fires BEFORE the user stop-loss.
+  // Protects against misconfig / RPC lag / price gap. Default -30 via config
+  // (overridable as hardEmergencyStopLossPct but kept separate from stopLossPct).
+  const EMERGENCY_FLOOR_PCT = mgmt.hardEmergencyStopLossPct ?? -30;
   if (currentPnlPct <= EMERGENCY_FLOOR_PCT) {
     action = `STOP_LOSS: PnL ${currentPnlPct.toFixed(1)}% hit emergency floor (${EMERGENCY_FLOOR_PCT}%)`;
     const alreadyTriggered = pos.notes.some(n => n.startsWith("STOP_LOSS:"));

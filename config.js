@@ -70,6 +70,9 @@ export const config = {
     positionSizePct:       u.positionSizePct   ?? 0.35,  // % of deployable capital per position
     pnlUnit:               u.pnlUnit           ?? "sol", // "sol" or "usd" — how PnL is displayed
     priorityFeeLevel:      u.priorityFeeLevel  ?? "Medium",
+    // Emergency tail-loss floor (checked before user-configured stopLossPct in state.js).
+    // Fires only if the user stop-loss misses (misconfig, RPC lag, price gap).
+    hardEmergencyStopLossPct: u.hardEmergencyStopLossPct ?? -30,
   },
 
   // ─── Strategy Mapping ───────────────────
@@ -84,6 +87,9 @@ export const config = {
     screeningIntervalMin:  u.screeningIntervalMin  ?? 30,
     healthCheckIntervalMin: u.healthCheckIntervalMin ?? 60,
     pnlWatcherIntervalSec: u.pnlWatcherIntervalSec ?? 30,
+    // Adaptive fast interval for high-volatility positions.
+    pnlWatcherFastIntervalSec: u.pnlWatcherFastIntervalSec ?? 15,
+    pnlWatcherHighVolThreshold: u.pnlWatcherHighVolThreshold ?? 5,
   },
 
   // ─── LLM Settings ──────────────────────
@@ -137,6 +143,9 @@ export const config = {
     cooldownCloses: u.autoresearchCooldownCloses ?? 5,
     llmModel: u.autoresearchModel ?? DEFAULT_MODEL,
     reasoningEffort: u.autoresearchReasoningEffort ?? "medium",
+    // Two-proportion z-test threshold for keep/revert decisions.
+    // 1.645 ≈ p<0.10, 1.96 ≈ p<0.05. Lower = more permissive.
+    significanceZ: u.autoresearchSignificanceZ ?? 1.645,
   },
 
   // ─── Knowledge Base ─────────────��──────
@@ -186,11 +195,14 @@ const SECTION_MAP = {
 // Keys that no caller may change
 const LOCKED_KEYS = new Set(["walletKey", "rpcUrl", "llmModel"]);
 
-// Keys that atlas_autotune may NOT change (cadence / owner-level)
+// Keys that atlas_autotune may NOT change (cadence / owner-level / safety-net)
 const ATLAS_DISALLOWED = new Set([
   "managementIntervalMin",
   "healthCheckIntervalMin",
   "pnlWatcherIntervalSec",
+  "pnlWatcherFastIntervalSec",
+  "pnlWatcherHighVolThreshold",
+  "hardEmergencyStopLossPct",
 ]);
 
 // Bounds for agent-tunable keys: [min, max]
@@ -207,6 +219,8 @@ const VALUE_BOUNDS = {
   minFeeActiveTvlRatio: [0.07, 0.4],
   maxVolatility:     [8, 30],
   stopLossPct:       [-50, -3],
+  // Emergency floor: agent can tighten (toward -50) but may never loosen past -15
+  hardEmergencyStopLossPct: [-50, -15],
   takeProfitFeePct:  [1, 50],
   trailingTriggerPct: [0.5, 20],
   trailingDropPct:   [0.5, 10],
