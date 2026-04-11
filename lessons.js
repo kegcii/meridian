@@ -212,28 +212,20 @@ export async function recordPerformance(perf) {
     log("kb", `Failed to file position close to KB: ${e.message}`);
   }
 
-  // Auto-blacklist: if this token has ≥2 losses ≤-5% in last 30d, blacklist it.
-  // Keeps Freg-class bleeders from getting deployed into indefinitely.
+  // Auto-blacklist: any single catastrophic loss (≤ -30%) = blacklist the token.
+  // No multi-loss accumulation — smaller losses might be recoverable opportunities
+  // and we don't want to kill exploration. A -30% rug/dump is never a false signal.
   try {
-    if (perf.base_mint && entry.pnl_pct <= -5) {
+    if (perf.base_mint && entry.pnl_pct <= -30) {
       const { isBlacklisted, addToBlacklist } = await import("./token-blacklist.js");
       if (!isBlacklisted(perf.base_mint)) {
-        const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-        const recentLosses = data.performance.filter((p) =>
-          p.base_mint === perf.base_mint &&
-          (p.pnl_pct ?? 0) <= -5 &&
-          new Date(p.recorded_at || p.closed_at || 0).getTime() >= cutoff
-        );
-        if (recentLosses.length >= 2) {
-          const totalLossPct = recentLosses.reduce((s, p) => s + (p.pnl_pct ?? 0), 0);
-          const symbol = (perf.pool_name || "").split("-")[0] || "UNKNOWN";
-          addToBlacklist({
-            mint: perf.base_mint,
-            symbol,
-            reason: `auto: ${recentLosses.length} losses ≤-5% in 30d (cumulative ${totalLossPct.toFixed(1)}%)`,
-          });
-          log("blacklist", `Auto-blacklisted ${symbol} (${perf.base_mint.slice(0, 8)}…) after ${recentLosses.length} losses`);
-        }
+        const symbol = (perf.pool_name || "").split("-")[0] || "UNKNOWN";
+        addToBlacklist({
+          mint: perf.base_mint,
+          symbol,
+          reason: `auto: single catastrophic loss ${entry.pnl_pct.toFixed(1)}% on ${perf.pool_name}`,
+        });
+        log("blacklist", `Auto-blacklisted ${symbol} (${perf.base_mint.slice(0, 8)}…) after ${entry.pnl_pct.toFixed(1)}% loss`);
       }
     }
   } catch (e) {
@@ -766,7 +758,8 @@ export function evolveFromLessons(lessons, config, { userConfig, lessonsData } =
   }
 
   // 1. Downside OOR pattern → tighten stop loss
-  const oorDownCount = tagCounts["downside"] || 0;
+  // Accept both legacy "downside" tag and new "oor_downside" tag from derivLesson.
+  const oorDownCount = (tagCounts["oor_downside"] || 0) + (tagCounts["downside"] || 0);
   if (oorDownCount >= 3) {
     const current = config.management.stopLossPct ?? -40;
     const newVal = clamp(Math.round(current * 0.85), -50, -5); // tighten by 15%

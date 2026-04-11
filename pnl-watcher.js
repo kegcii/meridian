@@ -229,17 +229,52 @@ async function sweepLeftoverTokens() {
   }
 }
 
+const HIGH_VOL_THRESHOLD = 5;
+const FAST_INTERVAL_SEC = 15;
+let _currentIntervalSec = null;
+let _baseIntervalSec = 30;
+
+/**
+ * If any open position has volatility ≥5, tick every 15s instead of 30s.
+ * High-vol tokens can move 10%+ between normal ticks, outrunning stop-loss.
+ */
+function chooseInterval() {
+  try {
+    const open = getTrackedPositions(true);
+    const hasHighVol = open.some((p) => (p.volatility ?? 0) >= HIGH_VOL_THRESHOLD);
+    return hasHighVol ? FAST_INTERVAL_SEC : _baseIntervalSec;
+  } catch {
+    return _baseIntervalSec;
+  }
+}
+
+function scheduleNextTick() {
+  const target = chooseInterval();
+  if (target !== _currentIntervalSec) {
+    if (_intervalHandle) clearInterval(_intervalHandle);
+    _currentIntervalSec = target;
+    log("pnl_watcher", `Interval → ${target}s (${target === FAST_INTERVAL_SEC ? "high-vol mode" : "normal"})`);
+    _intervalHandle = setInterval(async () => {
+      await runPnlWatcher();
+      // Re-evaluate after each tick — positions may have opened/closed
+      scheduleNextTick();
+    }, target * 1000);
+  }
+}
+
 export function startPnlWatcher(intervalSec = 30) {
   if (_intervalHandle) {
     log("pnl_watcher", "Already running - stopping previous instance");
     clearInterval(_intervalHandle);
+    _intervalHandle = null;
+    _currentIntervalSec = null;
   }
 
-  const intervalMs = intervalSec * 1000;
-  log("pnl_watcher", `Starting PnL watcher (every ${intervalSec}s)`);
+  _baseIntervalSec = intervalSec;
+  log("pnl_watcher", `Starting PnL watcher (base ${intervalSec}s, fast ${FAST_INTERVAL_SEC}s for vol≥${HIGH_VOL_THRESHOLD})`);
 
   runPnlWatcher();
-  _intervalHandle = setInterval(runPnlWatcher, intervalMs);
+  scheduleNextTick();
 }
 
 export function stopPnlWatcher() {
