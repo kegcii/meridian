@@ -15,6 +15,7 @@
  */
 import { config } from "./config.js";
 import { getKbSummaryForPrompt } from "./knowledge-base.js";
+import { getExplorerSummary } from "./strategy-explorer.js";
 
 // ─── Section Override System (used by autoresearch) ──────────
 const _sectionOverrides = {};
@@ -231,6 +232,19 @@ ${signalWeights}
 Prioritize candidates whose strongest attributes align with high-weight signals.
 `;
     }
+
+    // Strategy explorer — Thompson-sampled recommendation for the next deploy.
+    try {
+      const summary = getExplorerSummary();
+      if (summary) {
+        prompt += `
+═══════════════════════════════════════════
+ STRATEGY EXPLORER (Thompson Sampling)
+═══════════════════════════════════════════
+${summary}
+`;
+      }
+    } catch { /* optional — never block prompt construction */ }
   } else if (agentType === "MANAGER") {
     prompt += `Role: MANAGER
 

@@ -964,15 +964,17 @@ export function unpinLesson(id) {
 }
 
 /**
- * List lessons with optional filters.
+ * List lessons with optional filters. Soft-deleted lessons are excluded
+ * unless includeDeleted=true.
  */
-export function listLessons({ role = null, pinned = null, tag = null, limit = 30 } = {}) {
+export function listLessons({ role = null, pinned = null, tag = null, limit = 30, includeDeleted = false } = {}) {
   const data = load();
   let lessons = [...data.lessons];
 
-  if (pinned !== null) lessons = lessons.filter((l) => !!l.pinned === pinned);
-  if (role)            lessons = lessons.filter((l) => !l.role || l.role === role);
-  if (tag)             lessons = lessons.filter((l) => l.tags?.includes(tag));
+  if (!includeDeleted)  lessons = lessons.filter((l) => !l.deleted_at);
+  if (pinned !== null)  lessons = lessons.filter((l) => !!l.pinned === pinned);
+  if (role)             lessons = lessons.filter((l) => !l.role || l.role === role);
+  if (tag)              lessons = lessons.filter((l) => l.tags?.includes(tag));
 
   return {
     total: lessons.length,
@@ -986,6 +988,49 @@ export function listLessons({ role = null, pinned = null, tag = null, limit = 30
       created_at: l.created_at?.slice(0, 10),
     })),
   };
+}
+
+/**
+ * Soft-delete a lesson by ID. Marks with deleted_at timestamp instead of
+ * removing, so we can undo and don't lose history.
+ */
+export function softDeleteLesson(id, reason = "manual") {
+  const data = load();
+  const lesson = data.lessons.find((l) => l.id === id);
+  if (!lesson) return { found: false };
+  lesson.deleted_at = new Date().toISOString();
+  lesson.deleted_reason = reason;
+  save(data);
+  log("lessons", `Soft-deleted lesson ${id}: ${reason}`);
+  return { found: true, id, rule: lesson.rule };
+}
+
+/**
+ * Sweep stale lessons from pre-dedup-fix era. Any lesson that was over-updated
+ * (update_count ≥ 10) is almost certainly a victim of the old findDuplicate bug
+ * that collapsed distinct failures into one. Soft-delete them so the agent's
+ * prompts don't cite meaningless merged lessons.
+ *
+ * @param {Object} opts
+ * @param {number} [opts.minUpdateCount=10] - minimum update_count to be considered stale
+ * @param {string} [opts.cutoffISO] - only mark lessons created before this timestamp
+ * @returns {{ archived: number }}
+ */
+export function softDeleteStaleLessons({ minUpdateCount = 10, cutoffISO = null } = {}) {
+  const data = load();
+  let archived = 0;
+  for (const l of data.lessons) {
+    if (l.deleted_at) continue;
+    if ((l.update_count || 0) < minUpdateCount) continue;
+    if (cutoffISO && l.created_at && l.created_at > cutoffISO) continue;
+    if (l.pinned) continue; // never auto-archive pinned lessons
+    l.deleted_at = new Date().toISOString();
+    l.deleted_reason = `auto: collapsed by pre-fix dedup (update_count=${l.update_count})`;
+    archived++;
+  }
+  if (archived > 0) save(data);
+  log("lessons", `Soft-deleted ${archived} stale pre-fix lessons`);
+  return { archived };
 }
 
 /**
@@ -1045,6 +1090,8 @@ export function getLessonsForPrompt(opts = {}) {
   const { agentType = "GENERAL", maxLessons = 35 } = opts;
 
   const data = load();
+  // Filter out soft-deleted lessons before any tier selection
+  data.lessons = data.lessons.filter((l) => !l.deleted_at);
   if (data.lessons.length === 0) return null;
 
   const PINNED_CAP = 10;
