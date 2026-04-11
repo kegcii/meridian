@@ -170,10 +170,10 @@ export async function maybeRunAutoresearch(perfData, lessons, cfg) {
 // ─── Analyze + Generate Experiment ───────────────────────────
 
 async function analyzeAndGenerate(perfData, lessons, cfg, state) {
-  const minCloses = cfg.autoresearch?.minClosesPerTrial ?? 7;
+  const minCloses = cfg.autoresearch?.minClosesPerTrial ?? 15;
 
-  // Need at least 15 closes to analyze, or at minimum minCloses * 2
-  if (perfData.length < Math.max(15, minCloses * 2)) {
+  // Need at least 30 closes to analyze, or at minimum minCloses * 2
+  if (perfData.length < Math.max(30, minCloses * 2)) {
     log("autoresearch", `Not enough data (${perfData.length} closes) — skipping`);
     return;
   }
@@ -368,10 +368,10 @@ async function evaluateExperiment(perfData, cfg, state) {
   const experiment = state.active;
   if (!experiment) return;
 
-  const minCloses = cfg.autoresearch?.minClosesPerTrial ?? 7;
-  const minEvidenceCloses = cfg.autoresearch?.minEvidenceCloses ?? Math.max(10, minCloses + 2);
-  const minAbsoluteWinRateDeltaPct = cfg.autoresearch?.minAbsoluteWinRateDeltaPct ?? 10;
-  const minAbsolutePnlDeltaPct = cfg.autoresearch?.minAbsolutePnlDeltaPct ?? 0.5;
+  const minCloses = cfg.autoresearch?.minClosesPerTrial ?? 15;
+  const minEvidenceCloses = cfg.autoresearch?.minEvidenceCloses ?? Math.max(20, minCloses + 5);
+  const minAbsoluteWinRateDeltaPct = cfg.autoresearch?.minAbsoluteWinRateDeltaPct ?? 15;
+  const minAbsolutePnlDeltaPct = cfg.autoresearch?.minAbsolutePnlDeltaPct ?? 1.0;
   const improvementPct = cfg.autoresearch?.improvementPct ?? 15;
   const declinePct = cfg.autoresearch?.declinePct ?? 15;
   const cooldownCloses = cfg.autoresearch?.cooldownCloses ?? 5;
@@ -435,7 +435,10 @@ async function evaluateExperiment(perfData, cfg, state) {
     : (trialAvgPnl > 0 ? 100 : trialAvgPnl < 0 ? -100 : 0);
   const absolutePnlDelta = trialAvgPnl - baselinePnl;
 
-  const compositeImprovement = (wrImprovement * 0.6) + (pnlImprovement * 0.4);
+  // PnL-dominant scoring: reward total profitability over frequent tiny wins.
+  // Previously 60% WR / 40% PnL incentivized "often wins small" strategies that
+  // don't cover IL. 30% / 70% makes PnL magnitude the primary driver.
+  const compositeImprovement = (wrImprovement * 0.3) + (pnlImprovement * 0.7);
 
   const trialLosses = trialCount - trialWins;
   const isImbalancedTinySample = trialCount < 2 * minEvidenceCloses && (trialWins === 0 || trialLosses === 0);

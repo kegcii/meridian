@@ -191,22 +191,26 @@ Your goal: Find high-yield, high-volume pools and DEPLOY capital.
 
 ${screenerCriteria}
 
-STRATEGY SELECTION — HARD RULES:
-   DEFAULT: Always use bid_ask (single-sided SOL, bins below active bin only).
-   bid_ask is the proven strategy: 55% win rate, 8% loss rate, consistent returns.
+STRATEGY SELECTION — DATA-DRIVEN RULES:
+   Look at the "Strategy Performance" block below for the current live win rate and
+   avg PnL per strategy. DO NOT rely on any hard-coded assumption about which
+   strategy is "default best" — pick based on recent data.
 
-   You may ONLY use two-sided spot (with sol_split_pct) when ALL of these conditions are met:
-   1. study_top_lpers shows >= 80% win rate AND top LPers are using two-sided/spot
-   2. Pool has smart_wallets_present = true (institutional conviction)
-   3. Price trend is STABILIZING or RANGING (NOT mid-pump, NOT fading)
-   4. Pool memory shows prior spot deploys were profitable (if any exist)
-   If ANY condition is not met, use bid_ask. No exceptions.
+   DEFAULT GUIDANCE (overridden by Strategy Performance block if it disagrees):
+   - bid_ask: safest baseline for ranging or fading tokens, and for low-conviction entries
+   - spot with sol_split_pct 85-90: use when top LPers in study_top_lpers use spot AND
+     smart_wallets_present AND price is STABILIZING (not mid-pump, not mid-dump)
+   - spot with sol_split_pct 50-80: only when you have strong bullish conviction — more
+     token exposure means more IL risk if the token dumps
 
-   When using two-sided spot:
-   - sol_split_pct MUST be 85-90% (mostly SOL, minimal token exposure)
-   - Never go below sol_split_pct = 80% (too much token risk)
-   - Pass sol_split_pct with the deploy. The executor auto-swaps the token portion via Jupiter.
-   - You do NOT need to pre-buy tokens. Just provide total SOL as amount_y + sol_split_pct.
+   EXPLORATION (anti-monoculture):
+   - If the Strategy Performance block shows you have deployed ≥20 consecutive positions
+     using the same strategy, the NEXT deploy MUST try a different strategy (even one with
+     fewer samples) to generate variance. Darwin cannot learn which strategy is best without
+     diverse data. Pick from UNTESTED strategies first, then from low-sample alternatives.
+   - If a non-dominant strategy has a higher avgPnL than the dominant one (even with fewer
+     samples, as long as n ≥ 5), bias toward it for the next 2-3 deploys regardless of
+     the hard rules above — the data is telling you something.
 
 SPOT STRATEGY BIN DIRECTION — CRITICAL:
    - SOL (Y / quote) fills bins BELOW the active bin only
@@ -214,10 +218,9 @@ SPOT STRATEGY BIN DIRECTION — CRITICAL:
    - SOL-only spot: set bins_below = range, bins_above = 0 (same direction as bid_ask)
    - If depositing only SOL, NEVER set bins_above > 0 — those bins will be empty and waste range
 
-WHY bid_ask IS DEFAULT:
-   Historical data: spot without sol_split loses -10.75% avg with 45% win rate.
-   Spot WITH sol_split (85-90%) wins +7.48% avg with 73% win rate — but only when conditions are right.
-   bid_ask loses less when wrong (8% loss rate vs spot's 40%) and is safer by default.
+   When using two-sided spot:
+   - Pass sol_split_pct with the deploy. The executor auto-swaps the token portion via Jupiter.
+   - You do NOT need to pre-buy tokens. Just provide total SOL as amount_y + sol_split_pct.
 `;
     if (signalWeights) {
       prompt += `

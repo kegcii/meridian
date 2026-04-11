@@ -211,14 +211,13 @@ export function recalculateWeights(perfData, cfg = {}) {
   for (const [signal, lift] of ranked) {
     if ((sampleCounts[signal] ?? 0) < perSignalMinSamples) continue;
     if (Math.abs(lift) < minAbsLiftToAdjust) continue;
-    // HIGHER_IS_BETTER signals always have direction "higher" — don't overwrite
-    if (HIGHER_IS_BETTER.has(signal)) {
-      directions[signal] = "higher";
-    } else if (BOOLEAN_SIGNALS.has(signal)) {
+    if (BOOLEAN_SIGNALS.has(signal)) {
       // Boolean: positive lift means present=better, negative means absent=better
       directions[signal] = lift > 0 ? "present=better" : "absent=better";
     } else {
-      // Numeric non-HIGHER_IS_BETTER: track learned direction
+      // Numeric signals (including HIGHER_IS_BETTER priors): trust the data.
+      // If lift < 0, winners had LOWER values for this signal — flip direction.
+      // HIGHER_IS_BETTER is only a default used before enough evidence exists.
       directions[signal] = lift > 0 ? "higher" : "lower";
     }
   }
@@ -680,7 +679,73 @@ export function getWeightsSummary() {
     lines.push("\nWeights have not been recalculated yet (using defaults).");
   }
 
+  const stratBlock = getStrategyPerformanceSummary();
+  if (stratBlock) {
+    lines.push("");
+    lines.push(stratBlock);
+  }
+
   return lines.join("\n");
+}
+
+/**
+ * Aggregate win_rate + avg_pnl per strategy over the calibration window.
+ * Surfaces monoculture (e.g. all bid_ask) so the LLM knows to explore.
+ */
+export function getStrategyPerformanceSummary(windowDays = CALIBRATION_WINDOW_DAYS) {
+  try {
+    if (!fs.existsSync(LESSONS_FILE)) return null;
+    const raw = JSON.parse(fs.readFileSync(LESSONS_FILE, "utf8"));
+    const perf = raw.performance || [];
+    if (perf.length === 0) return null;
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - windowDays);
+    const cutoffISO = cutoff.toISOString();
+    const recent = perf.filter((p) => {
+      const ts = p.recorded_at || p.closed_at || p.deployed_at;
+      return ts && ts >= cutoffISO;
+    });
+    if (recent.length === 0) return null;
+
+    const buckets = {}; // key = strategy label -> { n, wins, sumPnl }
+    for (const p of recent) {
+      const base = p.strategy || "unknown";
+      const split = p.sol_split_pct;
+      const key = (base === "spot" && split != null) ? `spot_${split}` : base;
+      if (!buckets[key]) buckets[key] = { n: 0, wins: 0, sumPnl: 0 };
+      buckets[key].n++;
+      if ((p.pnl_usd ?? p.actual_pnl_usd ?? 0) > 0) buckets[key].wins++;
+      buckets[key].sumPnl += (p.pnl_pct ?? p.actual_pnl_pct ?? 0);
+    }
+
+    const rows = Object.entries(buckets)
+      .map(([name, b]) => ({
+        name,
+        n: b.n,
+        wr: (b.wins / b.n) * 100,
+        avg: b.sumPnl / b.n,
+      }))
+      .sort((a, b) => b.avg - a.avg);
+
+    const KNOWN_STRATEGIES = ["bid_ask", "spot_50", "spot_80", "curve"];
+    const seen = new Set(rows.map((r) => r.name));
+    const missing = KNOWN_STRATEGIES.filter((s) => !seen.has(s));
+
+    const lines = [`Strategy Performance (last ${windowDays}d, ${recent.length} closes):`];
+    for (const r of rows) {
+      lines.push(`  ${r.name.padEnd(12)} n=${String(r.n).padEnd(3)} WR=${r.wr.toFixed(0).padStart(3)}%  avgPnL=${(r.avg >= 0 ? "+" : "")}${r.avg.toFixed(2)}%`);
+    }
+    if (missing.length > 0) {
+      lines.push(`  UNTESTED: ${missing.join(", ")} — no samples. Consider exploring these to break monoculture.`);
+    }
+    if (rows.length === 1) {
+      lines.push(`  ⚠ MONOCULTURE: every recent deploy used ${rows[0].name}. Darwin cannot learn which strategy is best without variance. Try alternatives when conditions differ.`);
+    }
+    return lines.join("\n");
+  } catch {
+    return null;
+  }
 }
 
 function interpretWeight(val) {
