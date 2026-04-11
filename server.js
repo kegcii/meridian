@@ -34,7 +34,7 @@ export function setStartupCache({ wallet, positions, candidates, lpOverview }) {
 }
 import { getPerformanceSummary, getPerformanceHistory, listLessons, evolveThresholds } from "./lessons.js";
 import { getMemoryDashboardData } from "./memory.js";
-import { loadWeights } from "./signal-weights.js";
+import { loadWeights, getStrategyPerformanceSummary } from "./signal-weights.js";
 import { getActiveExperiment, loadAutoresearch } from "./autoresearch.js";
 import { buildKnowledgeGraph } from "./tools/knowledge-graph.js";
 import { log } from "./logger.js";
@@ -142,7 +142,57 @@ function buildInsightsPayload() {
     memory: getMemoryDashboardData(),
     darwin: buildDarwinPayload(),
     autoresearch: buildAutoresearchPayload(),
+    strategyPerformance: buildStrategyPerformancePayload(),
   };
+}
+
+function buildStrategyPerformancePayload() {
+  try {
+    const lessonsPath = path.join(__dirname, "lessons.json");
+    if (!fs.existsSync(lessonsPath)) return { strategies: [], untested: [], monoculture: false };
+    const raw = JSON.parse(fs.readFileSync(lessonsPath, "utf8"));
+    const perf = raw.performance || [];
+    const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+    const recent = perf.filter((p) => {
+      const ts = new Date(p.recorded_at || p.closed_at || p.deployed_at || 0).getTime();
+      return ts >= cutoff;
+    });
+
+    const buckets = {};
+    for (const p of recent) {
+      const base = p.strategy || "unknown";
+      const split = p.sol_split_pct;
+      const key = base === "spot" && split != null ? `spot_${split}` : base;
+      if (!buckets[key]) buckets[key] = { name: key, n: 0, wins: 0, sumPnl: 0 };
+      buckets[key].n++;
+      if ((p.pnl_usd ?? p.actual_pnl_usd ?? 0) > 0) buckets[key].wins++;
+      buckets[key].sumPnl += p.pnl_pct ?? p.actual_pnl_pct ?? 0;
+    }
+
+    const strategies = Object.values(buckets)
+      .map((b) => ({
+        name: b.name,
+        n: b.n,
+        win_rate: Math.round((b.wins / b.n) * 1000) / 10,
+        avg_pnl_pct: Math.round((b.sumPnl / b.n) * 100) / 100,
+      }))
+      .sort((a, b) => b.avg_pnl_pct - a.avg_pnl_pct);
+
+    const KNOWN = ["bid_ask", "spot", "spot_50", "spot_80", "curve"];
+    const seen = new Set(strategies.map((s) => s.name));
+    const untested = KNOWN.filter((k) => !seen.has(k));
+
+    return {
+      strategies,
+      untested,
+      total_samples: recent.length,
+      monoculture: strategies.length === 1,
+      window_days: 90,
+    };
+  } catch (err) {
+    log("server_error", `buildStrategyPerformancePayload failed: ${err.message}`);
+    return { strategies: [], untested: [], error: err.message };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +247,15 @@ export function startServer(timersFn) {
       res.json(buildInsightsPayload());
     } catch (err) {
       log("server_error", `GET /api/insights failed: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/strategy-performance", (_req, res) => {
+    try {
+      res.json(buildStrategyPerformancePayload());
+    } catch (err) {
+      log("server_error", `GET /api/strategy-performance failed: ${err.message}`);
       res.status(500).json({ error: err.message });
     }
   });

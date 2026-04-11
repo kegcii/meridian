@@ -458,6 +458,28 @@ async function evaluateExperiment(perfData, cfg, state) {
     return;
   }
 
+  // Statistical significance gate: two-proportion z-test on WR delta.
+  // Prevents commit/revert on noise — a 20pt WR swing on n=15 can still be p>0.15.
+  // We only enforce this when we have ≥ minCloses on both sides; below that fall back
+  // to the absolute-delta gate above.
+  const baselineN = experiment.baseline.positions || 0;
+  if (baselineN >= minCloses && trialCount >= minCloses) {
+    const pBase = baselineWR / 100;
+    const pTrial = trialWR / 100;
+    const pPool = (pBase * baselineN + pTrial * trialCount) / (baselineN + trialCount);
+    const se = Math.sqrt(pPool * (1 - pPool) * (1 / baselineN + 1 / trialCount));
+    const z = se > 0 ? (pTrial - pBase) / se : 0;
+    const absZ = Math.abs(z);
+    // Two-tailed z=1.645 ≈ p<0.10; z=1.96 ≈ p<0.05.
+    const SIG_Z = cfg.autoresearch?.significanceZ ?? 1.645;
+    if (absZ < SIG_Z) {
+      log("autoresearch", `Experiment ${experiment.id}: WR delta not significant (z=${z.toFixed(2)} < ${SIG_Z}, p≈${(2 * (1 - normalCdf(absZ))).toFixed(3)}) — verdict inconclusive`);
+      finishExperiment(state, "inconclusive", cooldownCloses);
+      return;
+    }
+    log("autoresearch", `Experiment ${experiment.id}: WR delta statistically significant (z=${z.toFixed(2)}, p≈${(2 * (1 - normalCdf(absZ))).toFixed(3)})`);
+  }
+
   log("autoresearch", `Experiment ${experiment.id}: trial WR ${trialWR.toFixed(1)}% vs baseline ${baselineWR.toFixed(1)}% (WR improvement: ${wrImprovement.toFixed(1)}%, PnL improvement: ${pnlImprovement.toFixed(1)}%, composite: ${compositeImprovement.toFixed(1)}%)`);
 
   if (compositeImprovement >= improvementPct) {
@@ -484,6 +506,17 @@ async function evaluateExperiment(perfData, cfg, state) {
     logExperimentLesson(experiment, "inconclusive", compositeImprovement);
     finishExperiment(state, "inconclusive", cooldownCloses);
   }
+}
+
+/**
+ * Standard normal CDF approximation (Abramowitz & Stegun 26.2.17).
+ * Used for computing p-values from z-scores in significance testing.
+ */
+function normalCdf(z) {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989422804014327 * Math.exp(-z * z / 2);
+  const p = d * t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return z >= 0 ? 1 - p : p;
 }
 
 function finishExperiment(state, status, cooldownCloses) {

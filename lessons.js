@@ -212,6 +212,34 @@ export async function recordPerformance(perf) {
     log("kb", `Failed to file position close to KB: ${e.message}`);
   }
 
+  // Auto-blacklist: if this token has ≥2 losses ≤-5% in last 30d, blacklist it.
+  // Keeps Freg-class bleeders from getting deployed into indefinitely.
+  try {
+    if (perf.base_mint && entry.pnl_pct <= -5) {
+      const { isBlacklisted, addToBlacklist } = await import("./token-blacklist.js");
+      if (!isBlacklisted(perf.base_mint)) {
+        const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+        const recentLosses = data.performance.filter((p) =>
+          p.base_mint === perf.base_mint &&
+          (p.pnl_pct ?? 0) <= -5 &&
+          new Date(p.recorded_at || p.closed_at || 0).getTime() >= cutoff
+        );
+        if (recentLosses.length >= 2) {
+          const totalLossPct = recentLosses.reduce((s, p) => s + (p.pnl_pct ?? 0), 0);
+          const symbol = (perf.pool_name || "").split("-")[0] || "UNKNOWN";
+          addToBlacklist({
+            mint: perf.base_mint,
+            symbol,
+            reason: `auto: ${recentLosses.length} losses ≤-5% in 30d (cumulative ${totalLossPct.toFixed(1)}%)`,
+          });
+          log("blacklist", `Auto-blacklisted ${symbol} (${perf.base_mint.slice(0, 8)}…) after ${recentLosses.length} losses`);
+        }
+      }
+    }
+  } catch (e) {
+    log("blacklist", `Auto-blacklist check failed: ${e.message}`);
+  }
+
   // Evolve thresholds every 5 closed positions (compare against stored counter, not modulo)
   {
     const lastEvolvedAt = readUserConfig()._positionsAtEvolution || 0;
@@ -320,7 +348,15 @@ function derivLesson(perf) {
       tags.push("worked");
     } else {
       rule = `FAILED: ${context} → PnL ${perf.pnl_pct}%, range efficiency ${perf.range_efficiency}%. Reason: ${perf.close_reason}.`;
-      tags.push("failed");
+      // Specific tags so distinct failure patterns don't collapse into one lesson.
+      tags.push(
+        "failed",
+        perf.strategy || "unknown_strategy",
+        `bin_step_${perf.bin_step ?? "unknown"}`,
+        `volatility_${Math.round(perf.volatility ?? 0)}`,
+      );
+      if (oorDir) tags.push(`oor_${oorDir}`);
+      if (perf.pool_name) tags.push(perf.pool_name.replace(/-SOL$/i, "").toLowerCase());
     }
   }
 
@@ -655,7 +691,9 @@ function lessonDedupKey(rule) {
     .replace(/[\d.]+ hours?/g, 'N hours')  // "2 hours" → "N hours"
     .replace(/[\d.]+ bins?/g, 'N bins')    // "50 bins" → "N bins"
     .replace(/\b\d+\b/g, 'N')             // standalone numbers → "N"
-    .replace(/[A-Z][a-z]+-SOL/gi, 'X-SOL') // "Downald-SOL" → "X-SOL"
+    // NOTE: intentionally NOT collapsing pool names (X-SOL). Previously we did,
+    // which caused different pools with similar failure structure to dedup
+    // together, merging 15+ distinct failures into one lesson.
     .replace(/\s+/g, ' ')                  // collapse whitespace
     .trim();
 }
@@ -677,13 +715,19 @@ function tagsMatch(a, b) {
  */
 function findDuplicate(lessons, candidate) {
   const candidateKey = lessonDedupKey(candidate.rule);
+  const candidateTagSet = new Set(candidate.tags || []);
 
   for (let i = lessons.length - 1; i >= 0; i--) {
     const existing = lessons[i];
 
-    // Method 1: Tag + outcome match
+    // Method 1: Require STRONG tag overlap (≥3 shared specific tags) + same outcome.
+    // Previously any tag-set match merged every "failed" lesson into one. Now we
+    // require enough shared specificity that only genuinely similar patterns merge.
     if (existing.outcome === candidate.outcome && tagsMatch(existing.tags, candidate.tags)) {
-      return i;
+      const existingTagSet = new Set(existing.tags || []);
+      let shared = 0;
+      for (const t of candidateTagSet) if (existingTagSet.has(t)) shared++;
+      if (shared >= 3) return i;
     }
 
     // Method 2: Normalized key match

@@ -77,6 +77,21 @@ type MemoryPayload = {
   nuggets: MemoryNugget[];
 };
 
+type StrategyPerformanceRow = {
+  name: string;
+  n: number;
+  win_rate: number;
+  avg_pnl_pct: number;
+};
+
+type StrategyPerformancePayload = {
+  strategies: StrategyPerformanceRow[];
+  untested: string[];
+  total_samples?: number;
+  monoculture?: boolean;
+  window_days?: number;
+};
+
 type InsightsPayload = {
   lessons: {
     total: number;
@@ -85,6 +100,7 @@ type InsightsPayload = {
   memory: MemoryPayload | null;
   darwin: DarwinPayload;
   autoresearch: AutoresearchPayload;
+  strategyPerformance?: StrategyPerformancePayload;
 };
 
 function fmtPct(value: number | null | undefined) {
@@ -301,6 +317,50 @@ export default function IntelTab() {
               </div>
             ) : (
               <div className="text-sm text-ash/46">No promoted memory facts yet.</div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-amber-200/66">Strategy Performance</div>
+                <div className="mt-1 text-base font-medium tracking-tight text-cream">Live per-strategy stats ({data?.strategyPerformance?.window_days ?? 90}d)</div>
+              </div>
+              {data?.strategyPerformance?.monoculture ? (
+                <Badge variant="destructive">Monoculture</Badge>
+              ) : (
+                <Badge variant="outline">{data?.strategyPerformance?.total_samples ?? 0} closes</Badge>
+              )}
+            </div>
+
+            {data?.strategyPerformance?.strategies?.length ? (
+              <div className="flex flex-col gap-2">
+                {data.strategyPerformance.strategies.map((row) => {
+                  const pnlPositive = row.avg_pnl_pct >= 0;
+                  return (
+                    <div key={row.name} className="rounded-2xl border border-white/8 bg-white/4 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-cream/90">{row.name}</div>
+                          <div className="mt-1 text-xs text-ash/56">n={row.n} • WR {row.win_rate.toFixed(0)}%</div>
+                        </div>
+                        <div className={`font-mono text-lg ${pnlPositive ? "text-emerald-300" : "text-rose-300"}`}>
+                          {pnlPositive ? "+" : ""}{row.avg_pnl_pct.toFixed(2)}%
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {data.strategyPerformance.untested.length > 0 ? (
+                  <div className="mt-2 rounded-2xl border border-amber-400/40 bg-amber-400/8 px-4 py-3 text-xs text-amber-100/80">
+                    Untested strategies: {data.strategyPerformance.untested.join(", ")}. Consider exploring to break monoculture.
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <div className="text-sm text-ash/46">No closes in window.</div>
             )}
           </CardContent>
         </Card>
